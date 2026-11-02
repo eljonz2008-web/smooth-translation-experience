@@ -136,13 +136,12 @@ class TranslatorService : Service() {
             ACTION_TOGGLE -> { if (running) setActive(!active) else stopSelf(); return START_NOT_STICKY }
             ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
         }
-        if (running) return START_NOT_STICKY
-
         // Debe iniciarse en primer plano ANTES de obtener la proyección (Android 14+)
         val notif = buildNotification()
         if (Build.VERSION.SDK_INT >= 29)
             startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         else startForeground(1, notif)
+        if (running) return START_NOT_STICKY // ya estaba funcionando
 
         val code = intent?.getIntExtra(EXTRA_CODE, 0) ?: 0
         val data: Intent? = if (Build.VERSION.SDK_INT >= 33)
@@ -280,7 +279,7 @@ class TranslatorService : Service() {
             Phase.WAITING -> {
                 if (!frameValid) return
                 // Ignora fotogramas que aún podrían contener la capa anterior
-                if (lastFrameAt < clearedAt + 150) return
+                if (lastFrameAt < clearedAt + 120 && !(now - clearedAt > 600 && lastFrameAt > clearedAt)) return
                 val prev = prevSig
                 if (prev == null || changed(prev, sig)) { prevSig = sig; stableSince = now; return }
                 if (now - stableSince < prefs.settleMs) return
@@ -432,12 +431,10 @@ class TranslatorService : Service() {
             val raw = block.lines.joinToString(if (cjk) "" else " ") { it.text.trim() }.trim()
             if (raw.length < 2 || raw.count { it.isLetter() } < 2) continue
 
-            val src = if (pref == "auto") {
-                val l = try { Tasks.await(langId.identifyLanguage(raw), 5, TimeUnit.SECONDS) } catch (e: Exception) { "und" }
-                if (l == "und") "en" else l
-            } else pref
+            val detected = try { Tasks.await(langId.identifyLanguage(raw), 5, TimeUnit.SECONDS) } catch (e: Exception) { "und" }
             // Ya está en español → no hay nada que traducir (y así nunca se traduce a sí mismo)
-            if (src == "es") continue
+            if (detected == "es") continue
+            val src = if (pref == "auto") { if (detected == "und") "en" else detected } else pref
 
             val key = "$src|$raw"
             val translated = cache.get(key) ?: run {
