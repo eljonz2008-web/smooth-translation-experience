@@ -29,9 +29,9 @@ const steps = [
 ];
 
 const features = [
-  { k: "Local", t: "Todo en tu teléfono", d: "La lectura y la traducción funcionan sin servidores ni cuentas." },
-  { k: "Sync", t: "Siempre en su sitio", d: "Las traducciones siguen al cómic y nunca se amontonan." },
-  { k: "Fit", t: "Se funde con el globo", d: "Toma el color del globo original y ajusta la letra sola." },
+  { k: "Privado", t: "Todo en tu teléfono", d: "La lectura y la traducción funcionan sin servidores ni cuentas." },
+  { k: "Al día", t: "Siempre en su sitio", d: "Las traducciones siguen al cómic y nunca se amontonan." },
+  { k: "A medida", t: "Se funde con el globo", d: "Toma el color del globo original y ajusta la letra sola." },
 ];
 
 const bubble = [
