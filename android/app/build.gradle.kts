@@ -10,8 +10,8 @@ android {
         applicationId = "app.panelpop"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
     buildTypes {
         release { isMinifyEnabled = false }
@@ -25,6 +25,7 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("com.google.android.gms:play-services-tasks:18.2.0")
     // OCR local (ML Kit, gratis, on-device)
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
