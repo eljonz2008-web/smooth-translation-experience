@@ -148,12 +148,6 @@ object LangModels {
         return null
     }
 
-    /** El modelo existía pero falló al traducir: lo damos por no descargado y se vuelve a pedir. */
-    fun invalidate(code: String) {
-        translators.remove(code)?.let { runCatching { it.close() } }
-        if (code != TranslateLanguage.ENGLISH) ready.remove(code)
-    }
-
     fun closeTranslators() {
         translators.values.forEach { runCatching { it.close() } }
         translators.clear()
