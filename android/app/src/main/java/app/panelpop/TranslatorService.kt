@@ -117,8 +117,8 @@ class TranslatorService : Service() {
     private val recognizers = HashMap<String, TextRecognizer>()
 
     // ----- idiomas -----
-    /** Lector de OCR usado en modo automático: "ja" (lee japonés, chino y latino) o "ko". */
-    private var autoScript = "ja"
+    /** Lector de OCR usado en modo automático: "latin", "ja" (también chino) o "ko". */
+    private var autoScript = "latin"
     private var lastProbeAt = 0L
     /** Idiomas que hacen falta en la pantalla actual y aún se están descargando. */
     @Volatile private var pending: Set<String> = emptySet()
@@ -403,25 +403,31 @@ class TranslatorService : Service() {
     private fun ocr(bmp: Bitmap, lang: String): Text =
         Tasks.await(recognizer(lang).process(InputImage.fromBitmap(bmp, 0)), 15, TimeUnit.SECONDS)
 
+    private fun readerFor(pref: String) = if (pref == "en") "latin" else pref
+
     /**
-     * En automático se usa el lector japonés (también lee chino y alfabeto latino). Si casi no
-     * encuentra su escritura, se prueba el coreano (como mucho cada pocos segundos) y se queda
-     * con el que lea mejor.
+     * En automático se usa el último lector que funcionó (al empezar, el latino, que es el que
+     * mejor lee inglés). Si encuentra poco texto de su escritura —o cada 30 s— se prueban los
+     * otros lectores sobre la misma imagen y se queda con el que más lea.
      */
     private fun recognize(bmp: Bitmap, pref: String): Text {
-        if (pref != "auto") return ocr(bmp, pref)
+        if (pref != "auto") return ocr(bmp, readerFor(pref))
         val first = ocr(bmp, autoScript)
+        val score = TextFix.readerScore(first.text, autoScript)
+        val low = if (autoScript == "latin") score < 12 else score < 12
         val now = SystemClock.uptimeMillis()
-        if (LangPick.nativeChars(first.text, autoScript) >= 4 || now - lastProbeAt < 6000) return first
+        val due = lastProbeAt == 0L || now - lastProbeAt > 30_000 || (low && now - lastProbeAt > 6000)
+        if (!due) return first
         lastProbeAt = now
-        val other = if (autoScript == "ko") "ja" else "ko"
-        val second = try { ocr(bmp, other) } catch (e: Exception) { return first }
-        if (LangPick.nativeChars(second.text, other) >= 4) {
-            Log.i(TAG, "modo automático: cambio a lector $other")
-            autoScript = other
-            return second
+        var best = first; var bestScore = score; var bestReader = autoScript
+        for (other in listOf("latin", "ja", "ko")) {
+            if (other == autoScript) continue
+            val t = try { ocr(bmp, other) } catch (e: Exception) { continue }
+            val sc = TextFix.readerScore(t.text, other)
+            if (sc > bestScore * 1.3f && sc >= 6) { best = t; bestScore = sc; bestReader = other }
         }
-        return first
+        if (bestReader != autoScript) { Log.i(TAG, "modo automático: lector $bestReader"); autoScript = bestReader }
+        return best
     }
 
     private fun detectLatin(text: String): String = try {
@@ -443,8 +449,8 @@ class TranslatorService : Service() {
             if (b0.width() <= 0 || b0.height() <= 0) continue
             if (bubble != null && Rect.intersects(bubble, b0)) continue // es nuestra burbuja
             val script = LangPick.scriptLang(block.text) ?: continue
-            val sep = if (script == LangPick.LATIN) " " else ""
-            val raw = block.lines.joinToString(sep) { it.text.trim() }.trim()
+            val lines = block.lines.map { it.text }
+            val raw = if (script == LangPick.LATIN) TextFix.prepareLatin(lines) else TextFix.joinLines(lines, true)
             if (!LangPick.worthTranslating(raw)) continue
             items.add(Item(b0, raw, script))
         }
@@ -522,22 +528,17 @@ class TranslatorService : Service() {
         runCatching { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1, buildNotification()) }
     }
 
-    /** Color más común en el borde del texto original: así el parche se funde con el globo. */
+    /** Color del globo alrededor del texto original: así el parche se funde con él. */
     private fun sampleBackground(bmp: Bitmap, r: Rect): Int {
-        val m = 3
-        val l = (r.left - m).coerceIn(0, bmp.width - 1); val t = (r.top - m).coerceIn(0, bmp.height - 1)
-        val rr = (r.right + m).coerceIn(0, bmp.width - 1); val bb = (r.bottom + m).coerceIn(0, bmp.height - 1)
-        val counts = HashMap<Int, Int>()
-        fun add(x: Int, y: Int) {
-            val c = bmp.getPixel(x, y)
-            // agrupa colores parecidos (cuantización a 32 niveles por canal)
-            val q = Color.rgb(Color.red(c) and 0xF8, Color.green(c) and 0xF8, Color.blue(c) and 0xF8)
-            counts[q] = (counts[q] ?: 0) + 1
+        val samples = ArrayList<Int>()
+        for (m in intArrayOf(4, 8)) {
+            val l = (r.left - m).coerceIn(0, bmp.width - 1); val t = (r.top - m).coerceIn(0, bmp.height - 1)
+            val rr = (r.right + m).coerceIn(0, bmp.width - 1); val bb = (r.bottom + m).coerceIn(0, bmp.height - 1)
+            val stepX = ((rr - l) / 24).coerceAtLeast(1); val stepY = ((bb - t) / 12).coerceAtLeast(1)
+            var x = l; while (x <= rr) { samples.add(bmp.getPixel(x, t)); samples.add(bmp.getPixel(x, bb)); x += stepX }
+            var y = t; while (y <= bb) { samples.add(bmp.getPixel(l, y)); samples.add(bmp.getPixel(rr, y)); y += stepY }
         }
-        val stepX = ((rr - l) / 24).coerceAtLeast(1); val stepY = ((bb - t) / 12).coerceAtLeast(1)
-        var x = l; while (x <= rr) { add(x, t); add(x, bb); x += stepX }
-        var y = t; while (y <= bb) { add(l, y); add(rr, y); y += stepY }
-        return counts.maxByOrNull { it.value }?.key ?: Color.WHITE
+        return TextFix.pickBackground(samples.toIntArray())
     }
 
     // ---------- Ventanas flotantes ----------

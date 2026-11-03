@@ -43,7 +43,8 @@ class OverlayView(ctx: Context, private val prefs: Prefs) : View(ctx) {
         val list = blocks
         if (list.isEmpty()) return
         val cover = prefs.coverMode
-        val alpha = prefs.bgAlpha
+        // Al cubrir, el original no debe transparentarse o se mezclan los dos textos
+        val alpha = if (cover) maxOf(prefs.bgAlpha, 235) else prefs.bgAlpha
         val offset = (prefs.offsetY * density).toInt()
         val pad = 5f * density
         val radius = (if (cover) 8f else 12f) * density
@@ -51,6 +52,8 @@ class OverlayView(ctx: Context, private val prefs: Prefs) : View(ctx) {
         for (b in list) {
             val r = Rect(b.box)
             r.offset(0, offset)
+            // un poco más grande que el texto original para taparlo entero (letras en cursiva)
+            if (cover) r.inset(-(4 * density).toInt(), -(3 * density).toInt())
             if (!cover) r.offset(0, r.height() + (6 * density).toInt())
 
             // ancho mínimo para que el español (más largo) quepa
