@@ -337,7 +337,7 @@ class TranslatorService : Service() {
             frame = bmp
         }
         plane.buffer.rewind()
-        bmp!!.copyPixelsFromBuffer(plane.buffer)
+        bmp.copyPixelsFromBuffer(plane.buffer)
     }
 
     /** Firma 32×32 en escala de grises leída directamente del búfer (sin crear imágenes). */
