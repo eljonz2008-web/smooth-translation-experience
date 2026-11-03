@@ -10,8 +10,8 @@ android {
         applicationId = "app.panelpop"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
     buildTypes {
         release { isMinifyEnabled = false }
@@ -34,4 +34,6 @@ dependencies {
     // Detección de idioma + traducción local (modelos descargados al dispositivo)
     implementation("com.google.mlkit:language-id:17.0.6")
     implementation("com.google.mlkit:translate:17.0.3")
+
+    testImplementation("junit:junit:4.13.2")
 }

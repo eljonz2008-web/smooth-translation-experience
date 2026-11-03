@@ -125,6 +125,7 @@ class TranslatorService : Service() {
     private val announced = HashSet<String>()
     /** Al terminar una descarga se vuelve a leer la pantalla actual. */
     @Volatile private var rereadRequested = false
+    private var lastFailToast = 0L
     private val modelListener: (String, LangModels.State) -> Unit = { code, state -> onModel(code, state) }
 
     override fun onBind(i: Intent?): IBinder? = null
@@ -500,7 +501,10 @@ class TranslatorService : Service() {
             pending = waiting - nowReady.toSet()
             toast("Listo: ya puedo traducir del ${nowReady.joinToString(" y ") { LangPick.name(it) }}")
             rereadRequested = true
-        } else if (state == LangModels.State.FAILED) {
+        } else if (state == LangModels.State.FAILED && code in waiting + TranslateLanguage.SPANISH) {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastFailToast < 60_000) { updateBubble(); main.postDelayed({ if (running) rereadRequested = true }, LangModels.RETRY_MS + 500); return }
+            lastFailToast = now
             val why = LangModels.error(code) ?: "No se pudo descargar"
             toast("$why. Lo reintento en unos segundos…")
             // vuelve a leer más tarde: eso reintenta la descarga
