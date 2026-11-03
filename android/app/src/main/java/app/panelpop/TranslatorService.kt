@@ -35,14 +35,10 @@ import android.view.WindowManager
 import android.widget.TextView
 import android.widget.Toast
 import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.languageid.LanguageIdentification
 import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.TranslateRemoteModel
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.Translator
-import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
@@ -117,10 +113,19 @@ class TranslatorService : Service() {
     private var frameValid = false
 
     private val cache = LruCache<String, String>(500)
-    private val translators = HashMap<String, Translator>()
-    private val failedAt = HashMap<String, Long>()
     private val langId = LanguageIdentification.getClient()
     private val recognizers = HashMap<String, TextRecognizer>()
+
+    // ----- idiomas -----
+    /** Lector de OCR usado en modo automático: "ja" (lee japonés, chino y latino) o "ko". */
+    private var autoScript = "ja"
+    private var lastProbeAt = 0L
+    /** Idiomas que hacen falta en la pantalla actual y aún se están descargando. */
+    @Volatile private var pending: Set<String> = emptySet()
+    private val announced = HashSet<String>()
+    /** Al terminar una descarga se vuelve a leer la pantalla actual. */
+    @Volatile private var rereadRequested = false
+    private val modelListener: (String, LangModels.State) -> Unit = { code, state -> onModel(code, state) }
 
     override fun onBind(i: Intent?): IBinder? = null
 
@@ -128,6 +133,7 @@ class TranslatorService : Service() {
         super.onCreate()
         prefs = Prefs(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        LangModels.init(this)
         createChannel()
     }
 
@@ -167,6 +173,12 @@ class TranslatorService : Service() {
             return START_NOT_STICKY
         }
         running = true
+        LangModels.addListener(modelListener)
+        LangModels.refresh {
+            // Lo que seguro hará falta: español siempre, y el idioma elegido si no es automático
+            val pref = prefs.sourceLang
+            if (pref == "auto") LangModels.download(TranslateLanguage.SPANISH) else LangModels.ensurePair(pref)
+        }
         main.post(loop)
         return START_NOT_STICKY
     }
@@ -248,6 +260,13 @@ class TranslatorService : Service() {
     private fun tick() {
         if (resetRequested) { resetRequested = false; resetCycle() }
         val now = SystemClock.uptimeMillis()
+        if (rereadRequested) {
+            // Ya hay un idioma nuevo listo: borra lo que se ve y vuelve a leer la misma pantalla
+            rereadRequested = false
+            if (phase == Phase.SHOWING) main.post { overlay?.clear() }
+            phase = Phase.WAITING; clearedAt = now
+            prevSig = null; lastOcrSig = null; frameValid = false
+        }
 
         // 1) Lee el fotograma más reciente (null = la pantalla no ha cambiado desde el anterior)
         val img = try { reader?.acquireLatestImage() } catch (e: Exception) { null }
@@ -380,76 +399,123 @@ class TranslatorService : Service() {
         }
     }
 
-    private fun translator(src: String): Translator? {
-        val code = TranslateLanguage.fromLanguageTag(src) ?: return null
-        if (code == TranslateLanguage.SPANISH) return null
-        translators[code]?.let { return it }
-        val failed = failedAt[code]
-        if (failed != null && SystemClock.uptimeMillis() - failed < 30_000) return null
-        return try {
-            val model = TranslateRemoteModel.Builder(code).build()
-            val have = Tasks.await(RemoteModelManager.getInstance().isModelDownloaded(model), 10, TimeUnit.SECONDS)
-            if (!have) toast("Descargando idioma (solo la primera vez)…")
-            val t = Translation.getClient(TranslatorOptions.Builder()
-                .setSourceLanguage(code).setTargetLanguage(TranslateLanguage.SPANISH).build())
-            Tasks.await(t.downloadModelIfNeeded(), 3, TimeUnit.MINUTES)
-            if (!have) toast("Idioma listo")
-            translators[code] = t
-            failedAt.remove(code)
-            t
-        } catch (e: Exception) {
-            Log.e(TAG, "model $code", e)
-            failedAt[code] = SystemClock.uptimeMillis()
-            toast("No se pudo descargar el idioma. Revisa tu conexión.")
-            null
+    private fun ocr(bmp: Bitmap, lang: String): Text =
+        Tasks.await(recognizer(lang).process(InputImage.fromBitmap(bmp, 0)), 15, TimeUnit.SECONDS)
+
+    /**
+     * En automático se usa el lector japonés (también lee chino y alfabeto latino). Si casi no
+     * encuentra su escritura, se prueba el coreano (como mucho cada pocos segundos) y se queda
+     * con el que lea mejor.
+     */
+    private fun recognize(bmp: Bitmap, pref: String): Text {
+        if (pref != "auto") return ocr(bmp, pref)
+        val first = ocr(bmp, autoScript)
+        val now = SystemClock.uptimeMillis()
+        if (LangPick.nativeChars(first.text, autoScript) >= 4 || now - lastProbeAt < 6000) return first
+        lastProbeAt = now
+        val other = if (autoScript == "ko") "ja" else "ko"
+        val second = try { ocr(bmp, other) } catch (e: Exception) { return first }
+        if (LangPick.nativeChars(second.text, other) >= 4) {
+            Log.i(TAG, "modo automático: cambio a lector $other")
+            autoScript = other
+            return second
         }
+        return first
     }
 
-    private fun isCjk(c: Char): Boolean {
-        val b = Character.UnicodeBlock.of(c)
-        return b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
-            b == Character.UnicodeBlock.HIRAGANA || b == Character.UnicodeBlock.KATAKANA ||
-            b == Character.UnicodeBlock.HANGUL_SYLLABLES || b == Character.UnicodeBlock.HANGUL_JAMO ||
-            b == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION
-    }
+    private fun detectLatin(text: String): String = try {
+        val list = Tasks.await(langId.identifyPossibleLanguages(text), 5, TimeUnit.SECONDS)
+        LangPick.latinLang(list.map { it.languageTag to it.confidence })
+    } catch (e: Exception) { "en" }
+
+    private class Item(val box: Rect, val raw: String, val script: String)
 
     private fun readAndTranslate(bmp: Bitmap): List<TranslatedBlock> {
         val pref = prefs.sourceLang
-        val text = Tasks.await(
-            recognizer(if (pref == "auto") "ja" else pref).process(InputImage.fromBitmap(bmp, 0)),
-            15, TimeUnit.SECONDS
-        )
+        val text = recognize(bmp, pref)
         val inv = 1f / scale
         val bubble = bubbleRectScaled()
-        val out = ArrayList<TranslatedBlock>()
+
+        val items = ArrayList<Item>()
         for (block in text.textBlocks) {
             val b0 = block.boundingBox ?: continue
             if (b0.width() <= 0 || b0.height() <= 0) continue
             if (bubble != null && Rect.intersects(bubble, b0)) continue // es nuestra burbuja
-
-            val cjk = block.text.count { isCjk(it) } > block.text.length / 3
-            val raw = block.lines.joinToString(if (cjk) "" else " ") { it.text.trim() }.trim()
-            if (raw.length < 2 || raw.count { it.isLetter() } < 2) continue
-
-            val detected = try { Tasks.await(langId.identifyLanguage(raw), 5, TimeUnit.SECONDS) } catch (e: Exception) { "und" }
-            // Ya está en español → no hay nada que traducir (y así nunca se traduce a sí mismo)
-            if (detected == "es") continue
-            val src = if (pref == "auto") { if (detected == "und") "en" else detected } else pref
-
-            val key = "$src|$raw"
-            val translated = cache.get(key) ?: run {
-                val t = translator(src) ?: return@run null
-                val r = try { Tasks.await(t.translate(raw), 20, TimeUnit.SECONDS) } catch (e: Exception) { null }
-                if (r != null) cache.put(key, r)
-                r
-            } ?: continue
-            if (translated.isBlank()) continue
-
-            val box = Rect((b0.left * inv).toInt(), (b0.top * inv).toInt(),
-                (b0.right * inv).toInt(), (b0.bottom * inv).toInt())
-            out.add(TranslatedBlock(box, translated.trim(), sampleBackground(bmp, b0)))
+            val script = LangPick.scriptLang(block.text) ?: continue
+            val sep = if (script == LangPick.LATIN) " " else ""
+            val raw = block.lines.joinToString(sep) { it.text.trim() }.trim()
+            if (!LangPick.worthTranslating(raw)) continue
+            items.add(Item(b0, raw, script))
         }
+        if (items.isEmpty()) { setPending(emptySet()); return emptyList() }
+
+        // Un solo idioma para todo el texto latino de la página: mucho más fiable que globo a globo
+        val latinText = items.filter { it.script == LangPick.LATIN }.joinToString(" ") { it.raw }
+        val pageLatin = if (latinText.length >= 16) detectLatin(latinText) else "en"
+        val pageHasKana = items.any { it.script == "ja" }
+
+        val missing = LinkedHashSet<String>()
+        val out = ArrayList<TranslatedBlock>()
+        for (it in items) {
+            val src = LangPick.resolve(it.script, pref, pageLatin, pageHasKana)
+            if (src == "es") continue // ya está en español
+            val key = "$src|${it.raw}"
+            var translated = cache.get(key)
+            if (translated == null) {
+                val code = TranslateLanguage.fromLanguageTag(src) ?: continue
+                val t = LangModels.translatorOrDownload(code)
+                if (t == null) { missing.add(code); continue }
+                translated = try { Tasks.await(t.translate(it.raw), 20, TimeUnit.SECONDS) } catch (e: Exception) {
+                    Log.e(TAG, "translate $code", e); null
+                } ?: continue
+                cache.put(key, translated)
+            }
+            if (translated.isBlank()) continue
+            val box = Rect((it.box.left * inv).toInt(), (it.box.top * inv).toInt(),
+                (it.box.right * inv).toInt(), (it.box.bottom * inv).toInt())
+            out.add(TranslatedBlock(box, translated.trim(), sampleBackground(bmp, it.box)))
+        }
+        setPending(missing)
         return out
+    }
+
+    // ---------- descargas de idiomas ----------
+    private fun setPending(missing: Set<String>) {
+        pending = missing
+        val fresh = missing.filter { announced.add(it) }
+        if (fresh.isNotEmpty()) {
+            val names = fresh.joinToString(" y ") { LangPick.name(it) }
+            toast(if (LangModels.online()) "Descargando $names (solo la primera vez, ~30 MB). Aparecerá solo al terminar."
+                  else "Sin internet: no puedo descargar $names. Conéctate y seguiré solo.")
+        }
+        main.post { updateBubble() }
+    }
+
+    /** Se llama en el hilo principal cuando cambia el estado de un modelo. */
+    private fun onModel(code: String, state: LangModels.State) {
+        val waiting = pending
+        if (waiting.isEmpty()) return
+        val nowReady = waiting.filter { LangModels.pairState(it) == LangModels.State.READY }
+        if (nowReady.isNotEmpty()) {
+            pending = waiting - nowReady.toSet()
+            toast("Listo: ya puedo traducir del ${nowReady.joinToString(" y ") { LangPick.name(it) }}")
+            rereadRequested = true
+        } else if (state == LangModels.State.FAILED) {
+            val why = LangModels.error(code) ?: "No se pudo descargar"
+            toast("$why. Lo reintento en unos segundos…")
+            // vuelve a leer más tarde: eso reintenta la descarga
+            main.postDelayed({ if (running) rereadRequested = true }, LangModels.RETRY_MS + 500)
+        }
+        updateBubble()
+    }
+
+    private fun updateBubble() {
+        val b = bubble ?: return
+        val d = resources.displayMetrics.density
+        b.text = when { !active -> "❚❚"; pending.isNotEmpty() -> "⬇"; else -> "ES" }
+        b.alpha = if (active) 1f else 0.6f
+        b.background = bubbleBg(active, d)
+        runCatching { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1, buildNotification()) }
     }
 
     /** Color más común en el borde del texto original: así el parche se funde con el globo. */
@@ -547,16 +613,10 @@ class TranslatorService : Service() {
 
     private fun setActive(a: Boolean) {
         active = a
-        val d = resources.displayMetrics.density
-        bubble?.apply {
-            alpha = if (a) 1f else 0.6f
-            text = if (a) "ES" else "❚❚"
-            background = bubbleBg(a, d)
-        }
         overlay?.clear()
         resetRequested = true
+        updateBubble()
         toast(if (a) "Traductor reanudado" else "Traductor en pausa")
-        runCatching { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1, buildNotification()) }
     }
 
     private fun toast(msg: String) = main.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
@@ -571,19 +631,32 @@ class TranslatorService : Service() {
         Intent(this, TranslatorService::class.java).setAction(action),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
-    private fun buildNotification(): Notification =
-        Notification.Builder(this, CHANNEL)
+    private fun buildNotification(): Notification {
+        val waiting = pending
+        val title = when {
+            !active -> "PanelPop en pausa"
+            waiting.isNotEmpty() -> "Descargando ${waiting.joinToString(" y ") { LangPick.name(it) }}…"
+            else -> "PanelPop está traduciendo"
+        }
+        val body = when {
+            !active -> "Toca la burbuja para reanudar"
+            waiting.isNotEmpty() -> "Solo la primera vez. Las traducciones aparecerán solas al terminar."
+            else -> "Toca la burbuja para pausar · mantenla para cerrar"
+        }
+        return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setColor(ACCENT)
-            .setContentTitle(if (active) "PanelPop está traduciendo" else "PanelPop en pausa")
-            .setContentText(if (active) "Toca la burbuja para pausar · mantenla para cerrar" else "Toca la burbuja para reanudar")
+            .setContentTitle(title)
+            .setContentText(body)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, if (active) "Pausar" else "Reanudar", pi(ACTION_TOGGLE, 1)).build())
             .addAction(Notification.Action.Builder(null, "Cerrar", pi(ACTION_STOP, 2)).build())
             .build()
+    }
 
     override fun onDestroy() {
         running = false
+        LangModels.removeListener(modelListener)
         main.removeCallbacksAndMessages(null)
         overlay?.let { runCatching { wm.removeView(it) } }; overlay = null
         bubble?.let { runCatching { wm.removeView(it) } }; bubble = null
@@ -592,7 +665,7 @@ class TranslatorService : Service() {
         worker.execute {
             runCatching { reader?.close() }; reader = null
             frame?.recycle(); frame = null
-            translators.values.forEach { runCatching { it.close() } }
+            LangModels.closeTranslators()
             recognizers.values.forEach { runCatching { it.close() } }
             runCatching { langId.close() }
         }
