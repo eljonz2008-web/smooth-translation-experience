@@ -19,6 +19,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -33,6 +34,8 @@ class MainActivity : Activity() {
     private lateinit var permOverlay: PermRow
     private lateinit var permNotif: PermRow
     private lateinit var statusPill: TextView
+    private val langRows = ArrayList<LangRow>()
+    private val modelListener: (String, LangModels.State) -> Unit = { _, _ -> langRows.forEach { it.update() } }
     private val REQ_CAPTURE = 42
     private val REQ_NOTIF = 7
 
@@ -47,6 +50,7 @@ class MainActivity : Activity() {
     private val ACCENT2 = Color.rgb(255, 77, 109)
     private val OK = Color.rgb(74, 222, 128)
     private val WARN = Color.rgb(251, 191, 36)
+    private val BAD = Color.rgb(248, 113, 113)
 
     private var d = 1f
     private fun dp(v: Int) = (v * d).toInt()
@@ -69,6 +73,7 @@ class MainActivity : Activity() {
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         prefs = Prefs(this)
+        LangModels.init(this)
         d = resources.displayMetrics.density
         window.statusBarColor = BG
         window.navigationBarColor = BG
@@ -122,8 +127,21 @@ class MainActivity : Activity() {
         // ----- Idioma -----
         val lc = card(root, "Idioma del cómic")
         val langs = listOf("auto" to "Automático", "en" to "Inglés", "ja" to "Japonés", "ko" to "Coreano", "zh" to "Chino")
-        lc.addView(chips(langs, prefs.sourceLang) { prefs.sourceLang = it }, lp(top = 4))
-        lc.addView(hint("Para manhwas coreanos elige «Coreano»: se leen mucho mejor."), lp(top = 10))
+        lc.addView(chips(langs, prefs.sourceLang) { pick ->
+            prefs.sourceLang = pick
+            // Al elegir un idioma concreto se descarga ya, para no esperar luego dentro del cómic
+            if (pick != "auto" && LangModels.pairState(pick) != LangModels.State.READY) {
+                if (LangModels.ensurePair(pick)) toast("Descargando ${LangPick.name(pick)}…")
+                else toast("Sin conexión a internet")
+            }
+        }, lp(top = 4))
+        lc.addView(hint("«Automático» reconoce inglés, japonés, coreano y chino. Si sabes el idioma, elígelo: lee más rápido."), lp(top = 10))
+
+        // ----- Idiomas descargados -----
+        val mc = card(root, "Idiomas descargados")
+        mc.addView(hint("Cada idioma se descarga una sola vez (~30 MB) y luego traduce sin internet. Mejor con Wi‑Fi."), lp(top = 4))
+        for (code in listOf("es", "en", "ja", "ko", "zh")) langRows.add(LangRow(mc, code))
+        LangModels.addListener(modelListener)
 
         // ----- Texto -----
         val tc = card(root, "Cómo se ve la traducción")
@@ -264,11 +282,68 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Fila de un idioma: estado del modelo y botón Descargar / Reintentar. */
+    private inner class LangRow(parent: LinearLayout, private val code: String) {
+        private val dot = View(this@MainActivity)
+        private val sub = text("", 12.5f, MUTED)
+        private val spin = ProgressBar(this@MainActivity).apply {
+            isIndeterminate = true; indeterminateTintList = ColorStateList.valueOf(ACCENT)
+        }
+        private val btn = text("Descargar", 13f, Color.WHITE, true).apply {
+            setPadding(dp(14), dp(8), dp(14), dp(8)); background = gradient(12, ACCENT, ACCENT2)
+            setOnClickListener {
+                val ok = if (code == "es") LangModels.download(code) else LangModels.ensurePair(code)
+                if (!ok) toast("Sin conexión a internet")
+                update()
+            }
+        }
+        init {
+            val row = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(dot, LinearLayout.LayoutParams(dp(10), dp(10)).apply { rightMargin = dp(12) })
+            val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(text(LangPick.name(code).replaceFirstChar { it.uppercase() }, 15f, TEXT))
+            col.addView(sub)
+            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(spin, LinearLayout.LayoutParams(dp(26), dp(26)).apply { rightMargin = dp(4) })
+            row.addView(btn)
+            parent.addView(row, lp(top = 12))
+            update()
+        }
+        fun update() {
+            val st = if (code == "es" || code == "en") LangModels.state(code) else LangModels.pairState(code)
+            val (color, msg) = when {
+                !LangModels.checked -> MUTED to "Comprobando…"
+                st == LangModels.State.READY -> OK to when (code) {
+                    "en" -> "Incluido · funciona sin internet"
+                    "es" -> "Listo · necesario para traducir"
+                    else -> "Listo · funciona sin internet"
+                }
+                st == LangModels.State.DOWNLOADING -> WARN to "Descargando… puedes salir de aquí"
+                st == LangModels.State.FAILED -> BAD to ((LangModels.error(code) ?: LangModels.error("es") ?: "No se pudo descargar") + " · toca Reintentar")
+                else -> MUTED to if (code == "es") "Necesario para traducir" else "No descargado"
+            }
+            dot.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+            sub.text = msg
+            spin.visibility = if (st == LangModels.State.DOWNLOADING) View.VISIBLE else View.GONE
+            btn.text = if (st == LangModels.State.FAILED) "Reintentar" else "Descargar"
+            btn.visibility = if (LangModels.checked && (st == LangModels.State.MISSING || st == LangModels.State.FAILED)) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+
     // ---------- lógica ----------
     private fun notifGranted() = Build.VERSION.SDK_INT < 33 ||
         checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    override fun onResume() { super.onResume(); refresh() }
+    override fun onResume() {
+        super.onResume(); refresh()
+        LangModels.refresh { langRows.forEach { it.update() } }
+    }
+
+    override fun onDestroy() { LangModels.removeListener(modelListener); super.onDestroy() }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
