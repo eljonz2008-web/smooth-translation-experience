@@ -414,7 +414,7 @@ class TranslatorService : Service() {
         if (pref != "auto") return ocr(bmp, readerFor(pref))
         val first = ocr(bmp, autoScript)
         val score = TextFix.readerScore(first.text, autoScript)
-        val low = if (autoScript == "latin") score < 12 else score < 12
+        val low = score < 12
         val now = SystemClock.uptimeMillis()
         val due = lastProbeAt == 0L || now - lastProbeAt > 30_000 || (low && now - lastProbeAt > 6000)
         if (!due) return first
