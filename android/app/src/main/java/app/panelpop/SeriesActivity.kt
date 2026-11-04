@@ -67,6 +67,15 @@ class SeriesActivity : Activity() {
         setContentView(col)
 
         scraper = PageScraper(web, PageScraper.Want.CHAPTERS) { res -> onScraped(res) }
+        // Los capítulos salen en pantalla en cuanto aparecen; el resto se va añadiendo
+        scraper.onProgress = { res ->
+            val chs = WebParse.chapters(res.url.ifEmpty { series.url }, res.links)
+            if (chs.size > series.chapters.size || (chs.isNotEmpty() && !freshList)) {
+                series.chapters = chs; freshList = true
+                statusView.text = "${chs.size} capítulos · buscando más…"
+                refresh()
+            }
+        }
         refresh()
         load()
     }
@@ -115,8 +124,10 @@ class SeriesActivity : Activity() {
 
     override fun onDestroy() { scraper.cancel(); web.destroy(); super.onDestroy() }
 
+    private var freshList = false
+
     private fun load() {
-        spin.visibility = View.VISIBLE; webBtn.visibility = View.GONE
+        spin.visibility = View.VISIBLE; webBtn.visibility = View.GONE; freshList = false
         statusView.text = if (series.chapters.isEmpty()) "Buscando capítulos…" else "${series.chapters.size} capítulos · actualizando…"
         scraper.load(series.url)
     }
@@ -126,8 +137,10 @@ class SeriesActivity : Activity() {
         if (res != null) {
             val t = WebParse.cleanTitle(res.title)
             if (t.isNotEmpty() && t.length <= 120) series.title = t
-            if (res.cover.startsWith("http")) series.cover = res.cover
-            val chs = WebParse.chapters(series.url, res.links)
+            // Algunas webs ponen como "imagen" la propia página o su logo: entonces se queda la portada de la cuadrícula
+            if (res.cover.startsWith("http") && WebParse.key(res.cover) != WebParse.key(res.url) && WebParse.key(res.cover) != WebParse.key(series.url) &&
+                (series.cover.isEmpty() || !WebParse.looksLikeLogo(res.cover))) series.cover = res.cover
+            val chs = WebParse.chapters(res.url.ifEmpty { series.url }, res.links)
             if (chs.isNotEmpty()) series.chapters = chs
             if (series.inLibrary || series.read.isNotEmpty()) Library.save()
         }

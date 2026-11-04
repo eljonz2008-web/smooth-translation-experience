@@ -8,7 +8,8 @@ import java.net.URI
  * es una serie, qué es un capítulo y qué imágenes son páginas del cómic. Kotlin puro: tiene tests.
  */
 object WebParse {
-    data class RawLink(val url: String, val text: String, val inList: Boolean = false)
+    /** [fromData]: dirección encontrada en los datos de la página (scripts), no en un enlace visible. */
+    data class RawLink(val url: String, val text: String, val inList: Boolean = false, val fromData: Boolean = false)
     data class RawCard(val url: String, val title: String, val image: String)
     data class RawImage(val src: String, val width: Int, val height: Int, val inReader: Boolean = false)
 
@@ -19,8 +20,10 @@ object WebParse {
     private val CH_TEXT = Regex("""(?i)(?:cap[ií]tulo|chapter|chap|cap|ch|episodio|episode|ep)\.?\s*[-#:]?\s*(\d+(?:[.,]\d+)?)""")
     private val CH_URL = Regex("""(?i)(?:capitulo|chapter|chap|cap|ch|episode|episodio|ep)[-_/]?(\d+(?:[.-]\d+)?)""")
     private val ANY_NUM = Regex("""(\d+(?:[.,]\d+)?)""")
-    private val JUNK_IMG = Regex("""(?i)(logo|avatar|icon|favicon|banner|gravatar|emoji|placeholder|loading|spinner|/ads?[/_.-]|\.svg(\?|$)|discord|facebook|twitter|patreon|kofi|ko-fi)""")
-    private val NOT_SERIES = Regex("""(?i)/(page|genres?|generos?|tags?|category|categoria|author|autor|artist|login|register|user|account|cuenta|search|buscar|wp-login|feed|privacy|contact|dmca)(/|$|\?)""")
+    private val JUNK_IMG = Regex("""(?i)(logo|avatar|icon|favicon|banner|baner|gravatar|emoji|placeholder|loading|spinner|/ads?[/_.-]|\.svg(\?|$)|discord|facebook|twitter|patreon|kofi|ko-fi)""")
+    private val NOT_SERIES = Regex("""(?i)/(page|genres?|generos?|tags?|category|categoria|author|autor|artist|login|register|user|account|cuenta|search|buscar|wp-login|feed|privacy|contact|dmca|uploads?|foro|forum|rank|ranking|grupos?|groups?|perfil|profile|calendar|calendario|library|biblioteca)(/|$|\?)""")
+    // Lo que va detrás del nombre de la serie: "-12_01", "-176.5", "-capitulo-3"
+    private val AFTER_SLUG = Regex("""(?i)^[-_.]+(?:(?:cap[ií]tulo|chapter|chap|cap|ch|episodio|episode|ep)[-_.]?)?(\d+(?:\.\d+)?)(?:$|[-_/?#])""")
 
     /** "mangadex.org" → "https://mangadex.org/". Null si no parece una web. */
     fun normalizeUrl(input: String): String? {
@@ -36,6 +39,9 @@ object WebParse {
     }
 
     fun host(url: String): String = try { (URI(url).host ?: "").lowercase().removePrefix("www.") } catch (e: Exception) { "" }
+
+    /** Imagen genérica de la web (logo, portada para redes) en vez de la portada de la serie. */
+    fun looksLikeLogo(url: String) = JUNK_IMG.containsMatchIn(url) || Regex("""(?i)(site_options|/site/|og-|opengraph|default)""").containsMatchIn(url)
 
     private fun path(url: String): String = try { URI(url).rawPath ?: "/" } catch (e: Exception) { "/" }
 
@@ -64,32 +70,66 @@ object WebParse {
 
     private fun fmt(n: Double) = if (n % 1.0 == 0.0) n.toLong().toString() else n.toString()
 
+    /**
+     * Webs como ManhwaWeb ponen el número detrás del nombre de la serie y no escriben "Capítulo":
+     * serie /manhwa/hoja-del-norte_169 → capítulo /leer/hoja-del-norte_169-12_01 = 12.
+     */
+    fun numberAfterSlug(seriesUrl: String, url: String): Double? {
+        val slug = path(seriesUrl).trimEnd('/').substringAfterLast('/')
+        if (slug.length < 4) return null
+        val seg = path(url).trimEnd('/').substringAfterLast('/')
+        if (seg.length <= slug.length || !seg.startsWith(slug, true)) return null
+        return AFTER_SLUG.find(seg.substring(slug.length))?.groupValues?.get(1)?.toDoubleOrNull()
+    }
+
+    private fun parent(url: String) = path(url).trimEnd('/').substringBeforeLast('/')
+
+    private val LOGIN = Regex("""(?i)/(auth|login|signin|sign-in|register|registro|wp-login)(/|$|\?|\.)""")
+    // Lo que no es nombre del capítulo: fechas, "hace 3 horas", "Nuevo", "Gratis", emojis…
+    private val NAME_END = Regex("""(?i)(\d|\bhace\b|\bago\b|\bnuevo\b|\bnew\b|\bgratis\b|\bfree\b|\bsin leer\b|\ble[ií]do\b|\btemporada\b|\bseason\b|\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|january|february|march|april|june|july|august|september|october|november|december)\b|\p{So})""")
+
+    /** "Capitulo 257 -La Resolución Final- 19 horas ago" → "Capítulo 257: La Resolución Final"; "Capítulo 94 HACE 9 HORAS 💎" → "Capítulo 94". */
+    fun chapterName(text: String, n: Double): String {
+        val base = "Capítulo ${fmt(n)}"
+        val m = CH_TEXT.find(text) ?: return base
+        var rest = text.substring(m.range.last + 1).replace(Regex("\\s+"), " ")
+        NAME_END.find(rest)?.let { rest = rest.substring(0, it.range.first) }
+        rest = rest.trim(' ', '-', ':', '–', '—', '|', '.', ',', '(', '[')
+        return if (rest.length in 3..45 && rest.any { it.isLetter() }) "$base: $rest" else base
+    }
+
     /** Capítulos de la página de una serie, del más nuevo al más antiguo. */
     fun chapters(seriesUrl: String, raw: List<RawLink>): List<Chapter> {
         val seriesKey = key(seriesUrl)
-        data class C(val link: RawLink, val n: Double, val word: Boolean)
+        val sp = path(seriesUrl).trimEnd('/')
+        fun under(u: String) = sp.length > 1 && path(u).startsWith("$sp/")
+        data class C(val link: RawLink, val n: Double, val word: Boolean, val slug: Boolean)
         var cands = raw.mapNotNull { l ->
             if (!l.url.startsWith("http") || !sameSite(l.url, seriesUrl) || key(l.url) == seriesKey) return@mapNotNull null
-            val n = chapterNumber(l.text, l.url) ?: return@mapNotNull null
-            C(l, n, CH_WORD.containsMatchIn(l.text) || CH_URL.containsMatchIn(path(l.url)))
+            if (LOGIN.containsMatchIn(l.url)) return@mapNotNull null // capítulos de pago que piden cuenta
+            val bySlug = numberAfterSlug(seriesUrl, l.url)
+            val n = (if (CH_TEXT.containsMatchIn(l.text)) chapterNumber(l.text, l.url) else null)
+                ?: bySlug ?: chapterNumber(l.text, l.url) ?: return@mapNotNull null
+            C(l, n, CH_WORD.containsMatchIn(l.text) || CH_URL.containsMatchIn(path(l.url)), bySlug != null)
         }
-        val listed = cands.filter { it.link.inList }
+        // "nombre-de-la-serie-2" en la misma carpeta suele ser la temporada 2, no un capítulo;
+        // en otra carpeta (/leer/…) o cuando hay varios, sí son capítulos
+        val slugged = cands.filter { it.slug }
+        val slugOk = slugged.size >= 2 || slugged.any { parent(it.link.url) != parent(seriesUrl) }
+        // Enlaces sacados de los datos de la página (webs que solo dibujan 30 y el resto al bajar)
+        val listed = cands.filter { it.link.inList || (it.link.fromData && it.word && under(it.link.url)) }
         cands = when {
             listed.size >= 2 -> listed
-            else -> cands.filter { it.word }
+            else -> cands.filter { !it.link.fromData && (it.word || (it.slug && slugOk)) }
         }
         // Si muchos capítulos cuelgan de la ruta de la serie (/manga/slug/capitulo-1), quédate con esos
-        val sp = path(seriesUrl).trimEnd('/')
         if (sp.length > 1) {
-            val under = cands.filter { path(it.link.url).startsWith("$sp/") }
-            if (under.size >= 2) cands = under
+            val u = cands.filter { under(it.link.url) }
+            if (u.size >= 2) cands = u
         }
         val seenUrl = HashSet<String>(); val seenNum = HashSet<Double>()
         return cands.filter { seenUrl.add(key(it.link.url)) && seenNum.add(it.n) }
-            .map { c ->
-                val name = c.link.text.trim().replace(Regex("\\s+"), " ").take(60)
-                Chapter(c.link.url, if (name.isEmpty() || name.length > 50 || !CH_WORD.containsMatchIn(name)) "Capítulo ${fmt(c.n)}" else name, c.n)
-            }
+            .map { c -> Chapter(c.link.url, chapterName(c.link.text, c.n), c.n) }
             .sortedByDescending { it.number }
     }
 
@@ -97,8 +137,14 @@ object WebParse {
     fun pageImages(raw: List<RawImage>): List<String> {
         val clean = raw.filter { it.src.startsWith("http") && !JUNK_IMG.containsMatchIn(it.src) }
         val reader = clean.filter { it.inReader }
-        val picked = if (reader.size >= 2) reader.filter { it.width == 0 || it.width >= 200 }
-        else clean.filter { (it.width >= 400 && it.height >= 300) || it.height >= 600 }
+        // Si no hay zona de lectura reconocible: las páginas viven juntas en la misma carpeta
+        // (…/chapter_5/001.webp, 002.webp…), aunque aún no se hayan cargado (tamaño 0)
+        val folder = clean.groupBy { it.src.substringBefore('?').substringBeforeLast('/') }.values.maxByOrNull { it.size }
+        val picked = when {
+            reader.size >= 2 -> reader.filter { it.width == 0 || it.width >= 200 }
+            folder != null && folder.size >= 3 -> folder.filter { it.width == 0 || it.width >= 200 }
+            else -> clean.filter { (it.width >= 400 && it.height >= 300) || it.height >= 600 }
+        }
         val seen = HashSet<String>()
         return picked.map { it.src }.filter { seen.add(key(it)) }
     }
@@ -126,6 +172,8 @@ object WebParse {
     /** "Solo Leveling – Leer manga online | MiWeb" → "Solo Leveling" */
     fun cleanTitle(t: String): String {
         var s = t.trim().replace(Regex("\\s+"), " ")
+        // "manhwaQuiero Trabajar…": la etiqueta del tipo pegada al título
+        s = s.replace(Regex("""^(manhwa|manhua|manga|novela|novel|webtoon)(?=\p{Lu})"""), "")
         for (sep in listOf(" | ", " – ", " — ", " « ", " » ")) if (s.contains(sep)) s = s.substringBefore(sep)
         s = s.replace(Regex("""(?i)^(leer|read)\s+"""), "").replace(Regex("""(?i)\s+(manga|manhwa|manhua)?\s*(online|en español|español|sub español)$"""), "")
         return s.trim()

@@ -48,7 +48,8 @@ object Web {
 
 /**
  * Abre una página en un WebView (oculto o no), espera a que cargue lo que va saliendo por JS
- * (capítulos por AJAX, imágenes perezosas…) y devuelve lo encontrado cuando deja de cambiar.
+ * (capítulos por AJAX, imágenes perezosas, botones «Ver más»…) y devuelve lo encontrado cuando
+ * deja de cambiar. [onProgress] avisa en cuanto aparece algo, para no hacer esperar al usuario.
  */
 class PageScraper(private val web: WebView, private val want: Want, private val onDone: (Scraped?) -> Unit) {
     enum class Want { CARDS, CHAPTERS, IMAGES }
@@ -58,29 +59,42 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     private var started = 0L
     private var lastScore = -1
     private var stableTicks = 0
+    private var clicks = 0
     private var last: Scraped? = null
     private var finished = false
     var onPage: ((String) -> Unit)? = null
+    var onProgress: ((Scraped) -> Unit)? = null
 
     init {
         Web.setup(web)
+        // Para series y capítulos no hacen falta las fotos: la página carga mucho más rápido
+        if (want != Want.IMAGES) web.settings.blockNetworkImage = true
         web.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest) = !Web.allowed(req.url.toString())
-            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) { onPage?.invoke(url) }
+            override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
+                val u = req.url.toString()
+                if (!Web.allowed(u)) return true
+                // Después de pulsar «Ver más», algunas webs abren anuncios de otra web: se bloquean
+                return clicked && req.isForMainFrame && !req.isRedirect && here.isNotEmpty() && !WebParse.sameSite(u, here)
+            }
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) { here = url; onPage?.invoke(url) }
         }
     }
 
+    private var here = ""
+    private var clicked = false
+
     fun load(url: String) {
-        gen++; finished = false; lastScore = -1; stableTicks = 0; last = null
+        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0; clicked = false; last = null
         started = SystemClock.uptimeMillis()
+        here = url
         web.loadUrl(url)
         val g = gen
-        main.postDelayed({ poll(g) }, 1200)
+        main.postDelayed({ poll(g) }, 700)
     }
 
     /** Vuelve a leer la página actual sin recargarla (p. ej. tras pasar la verificación). */
     fun rescan() {
-        gen++; finished = false; lastScore = -1; stableTicks = 0
+        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0
         started = SystemClock.uptimeMillis()
         val g = gen
         main.postDelayed({ poll(g) }, 300)
@@ -90,6 +104,11 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
 
     private fun poll(g: Int) {
         if (g != gen || finished) return
+        // Listas de capítulos cortadas ("Ver más", "Mostrar todos"): se pulsan solas
+        if (want == Want.CHAPTERS && clicks < MAX_CLICKS) {
+            clicked = true
+            web.evaluateJavascript(MORE_JS) { r -> clicks += r?.toIntOrNull() ?: 0 }
+        }
         web.evaluateJavascript(JS) { res ->
             if (g != gen || finished) return@evaluateJavascript
             val s = parse(res)
@@ -101,12 +120,13 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
                     Want.IMAGES -> WebParse.pageImages(it.images).size
                 }
             } ?: 0
+            if (score > lastScore && score > 0 && s != null) onProgress?.invoke(s)
             if (score > 0 && score == lastScore) stableTicks++ else stableTicks = 0
             lastScore = score
             val elapsed = SystemClock.uptimeMillis() - started
-            val done = (score > 0 && stableTicks >= 2 && elapsed > 2500) || elapsed > TIMEOUT_MS
+            val done = (score > 0 && stableTicks >= 2 && elapsed > 1800) || elapsed > TIMEOUT_MS
             if (done) { finished = true; onDone(last) }
-            else main.postDelayed({ poll(g) }, 800)
+            else main.postDelayed({ poll(g) }, 600)
         }
     }
 
@@ -116,14 +136,23 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
             val o = JSONObject(str)
             val cards = ArrayList<WebParse.RawCard>(); val links = ArrayList<WebParse.RawLink>(); val imgs = ArrayList<WebParse.RawImage>()
             o.optJSONArray("cards")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { cards.add(WebParse.RawCard(it.optString("u"), it.optString("t"), it.optString("i"))) } }
-            o.optJSONArray("links")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { links.add(WebParse.RawLink(it.optString("u"), it.optString("t"), it.optInt("c") == 1)) } }
+            o.optJSONArray("links")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { links.add(WebParse.RawLink(it.optString("u"), it.optString("t"), it.optInt("c") == 1, it.optInt("c") == 2)) } }
             o.optJSONArray("images")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { imgs.add(WebParse.RawImage(it.optString("s"), it.optInt("w"), it.optInt("h"), it.optInt("r") == 1)) } }
             Scraped(o.optString("url"), o.optString("title"), o.optString("cover"), cards, links, imgs, o.optString("next"), o.optString("prev"))
         }
     } catch (e: Exception) { null }
 
     companion object {
-        const val TIMEOUT_MS = 18_000L
+        const val TIMEOUT_MS = 15_000L
+        private const val MAX_CLICKS = 40
+
+        // Pulsa botones tipo «Ver más / Mostrar todos» que no lleven a otra página. Devuelve cuántos pulsó.
+        private const val MORE_JS = """(function(){var n=0;var els=document.querySelectorAll('button,a,div,span,li');
+for(var i=0;i<els.length&&n<3;i++){var e=els[i];if(e.children.length>2)continue;var t=(e.textContent||'').trim();
+if(t.length>40||!/^(ver|mostrar|cargar|show|load|view)\s+(m[aá]s|more|todos|todo|all)/i.test(t))continue;
+var inner=false;for(var k=0;k<e.children.length;k++){if((e.children[k].textContent||'').trim()==t)inner=true}if(inner)continue;
+if(e.tagName=='A'){var h=e.getAttribute('href')||'';if(h&&h!='#'&&h.indexOf('javascript')!=0)continue}
+if(e.offsetParent===null)continue;try{e.click();n++}catch(x){}}return n})()"""
 
         // Sirve para casi todas las webs de mangas (WordPress Madara, MangaThemesia y genéricas)
         private const val JS = """(function(){
@@ -135,23 +164,34 @@ function src(img){
  c.push(img.currentSrc);c.push(img.getAttribute('src'));
  for(var i=0;i<c.length;i++){var v=(c[i]||'').trim();if(v&&v.indexOf('data:')!==0)return abs(v)}
  return ''}
+function bgOf(el){var m=/url\(["']?([^"')]+)/.exec(el.getAttribute('style')||'');return m?abs(m[1]):''}
 function meta(n){var m=document.querySelector('meta[property="'+n+'"],meta[name="'+n+'"]');return m?(m.getAttribute('content')||''):''}
 var h1=document.querySelector('h1');
 var r={url:location.href,title:(h1&&h1.textContent.trim())||meta('og:title')||document.title,cover:'',cards:[],links:[],images:[],next:'',prev:''};
 var ci=document.querySelector('.summary_image img,.thumb img,.manga-thumb img,.series-thumb img,.manga-info-pic img,.info-image img,.cover img,img.cover,.poster img');
 r.cover=(ci&&src(ci))||abs(meta('og:image')||'');
 var LIST='.wp-manga-chapter,#chapterlist,.chapter-list,.chapters,.eplister,.listing-chapters_wrap,.version-chap,.chapter-item,.row-content-chapter,.list-chapter,[class*=chapter],[id*=chapter],[class*=episode]';
+var TT='h3,h4,h5,.post-title,.tt,.title,[class*=title]';
 var as=document.querySelectorAll('a[href]');
 for(var i=0;i<as.length&&i<5000;i++){var a=as[i];var href=abs(a.getAttribute('href'));if(!href||href.indexOf('http')!==0)continue;
  var txt=(a.innerText||a.getAttribute('title')||'').trim().replace(/\s+/g,' ').slice(0,120);
- var img=a.querySelector('img');
- if(img){var box=a.closest('.page-item-detail,.manga-item,.bs,.bsx,.utao,.item,article,li,.card,[class*=card]');var tt=box&&box.querySelector('h3,h4,h5,.post-title,.tt,.title,[class*=title]');
-  r.cards.push({u:href,t:((tt&&tt.textContent)||a.getAttribute('title')||img.getAttribute('alt')||txt||'').trim().replace(/\s+/g,' ').slice(0,120),i:src(img)})}
+ var img=a.querySelector('img');var bg='';
+ if(!img){var be=a.matches('[style*=background-image]')?a:a.querySelector('[style*=background-image]');if(be)bg=bgOf(be)}
+ if(img||bg){var box=a.closest('.page-item-detail,.manga-item,.bs,.bsx,.utao,.item,article,li,.card,[class*=card]');
+  var tt=a.querySelector(TT);if(!tt&&box&&box.querySelectorAll('a img,a [style*=background-image]').length<=2)tt=box.querySelector(TT);
+  r.cards.push({u:href,t:((tt&&tt.textContent)||a.getAttribute('title')||a.getAttribute('aria-label')||(img&&img.getAttribute('alt'))||txt||'').trim().replace(/\s+/g,' ').slice(0,120),i:img?src(img):bg})}
  if(/\d/.test(txt+href)){r.links.push({u:href,t:txt,c:a.closest(LIST)?1:0})}
  var hint=((a.getAttribute('rel')||'')+' '+(a.className||'')+' '+txt).toLowerCase();
  if(!r.next&&/(^|\s)(next|siguiente|sig\.?|pr[oó]ximo)(\s|$|_)|next_page|nextchap|next-chap/.test(hint))r.next=href;
  if(!r.prev&&/(^|\s)(prev|previous|anterior|ant\.?)(\s|$|_)|prev_page|prevchap|prev-chap/.test(hint))r.prev=href;
 }
+// Direcciones escondidas en los datos de la página (listas que se dibujan al bajar, webs tipo app)
+var seenL={};for(var z=0;z<r.links.length;z++)seenL[r.links[z].u]=1;
+var sc=document.querySelectorAll('script:not([src])');var budget=2000000,nd=0;
+for(var q=0;q<sc.length&&nd<3000&&budget>0;q++){var tx=sc[q].textContent||'';if(tx.length<40)continue;budget-=tx.length;
+ var ms=tx.replace(/\\\//g,'/').match(/https?:\/\/[^"'\s<>\\)]+/g)||[];
+ for(var y=0;y<ms.length&&nd<3000;y++){var u=ms[y];if(seenL[u]||!/\d/.test(u))continue;var hh='';try{hh=new URL(u).host}catch(e){continue}
+  if(hh.replace(/^www\./,'')!==location.host.replace(/^www\./,''))continue;seenL[u]=1;nd++;r.links.push({u:u,t:'',c:2})}}
 var READER='.reading-content,#readerarea,.page-break,.container-chapter-reader,.reader-area,.chapter-content,#chapter-images,.chapter-images,.chapter-container,.read-container,[class*=reader],[id*=reader]';
 var im=document.querySelectorAll('img');
 for(var j=0;j<im.length&&j<800;j++){var g=im[j];var s=src(g);if(!s)continue;
