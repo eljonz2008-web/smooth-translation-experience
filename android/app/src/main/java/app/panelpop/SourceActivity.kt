@@ -79,6 +79,7 @@ class SourceActivity : Activity() {
         setContentView(col)
 
         scraper = PageScraper(web, PageScraper.Want.CARDS) { res -> show(res) }
+        scraper.onProgress = { res -> show(res, partial = true) }
         load(site)
     }
 
@@ -100,10 +101,14 @@ class SourceActivity : Activity() {
         scraper.load(url)
     }
 
-    private fun show(res: Scraped?) {
-        val cards = res?.let { WebParse.seriesCards(site, it.cards) } ?: emptyList()
-        adapter.items = cards.map { CoverItem(it.url, it.title, it.image, res?.url ?: site) }
+    private fun show(res: Scraped?, partial: Boolean = false) {
+        // La web puede redirigir a otro dominio (lectorjpg.com → visorjpg.lat): se compara con el final
+        val here = res?.url?.ifEmpty { null } ?: site
+        val cards = res?.let { WebParse.seriesCards(here, it.cards) } ?: emptyList()
+        if (partial && cards.size <= adapter.items.size) return
+        adapter.items = cards.map { CoverItem(it.url, it.title, it.image, here) }
         adapter.notifyDataSetChanged()
+        if (partial) { status.visibility = View.GONE; return }
         spin.visibility = View.GONE
         if (cards.isEmpty()) {
             status.visibility = View.VISIBLE; openBtn.visibility = View.VISIBLE

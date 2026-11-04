@@ -39,6 +39,9 @@ object WebParse {
 
     fun host(url: String): String = try { (URI(url).host ?: "").lowercase().removePrefix("www.") } catch (e: Exception) { "" }
 
+    /** Imagen genérica de la web (logo, portada para redes) en vez de la portada de la serie. */
+    fun looksLikeLogo(url: String) = JUNK_IMG.containsMatchIn(url) || Regex("""(?i)(site_options|/site/|og-|opengraph|default)""").containsMatchIn(url)
+
     private fun path(url: String): String = try { URI(url).rawPath ?: "/" } catch (e: Exception) { "/" }
 
     /** Clave para comparar URLs: sin #fragmento ni barra final. */
