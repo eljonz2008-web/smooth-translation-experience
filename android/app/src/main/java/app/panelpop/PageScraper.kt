@@ -150,6 +150,7 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
         private const val MORE_JS = """(function(){var n=0;var els=document.querySelectorAll('button,a,div,span,li');
 for(var i=0;i<els.length&&n<3;i++){var e=els[i];if(e.children.length>2)continue;var t=(e.textContent||'').trim();
 if(t.length>40||!/^(ver|mostrar|cargar|show|load|view)\s+(m[aá]s|more|todos|todo|all)/i.test(t))continue;
+var inner=false;for(var k=0;k<e.children.length;k++){if((e.children[k].textContent||'').trim()==t)inner=true}if(inner)continue;
 if(e.tagName=='A'){var h=e.getAttribute('href')||'';if(h&&h!='#'&&h.indexOf('javascript')!=0)continue}
 if(e.offsetParent===null)continue;try{e.click();n++}catch(x){}}return n})()"""
 
