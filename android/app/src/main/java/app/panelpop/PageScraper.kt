@@ -48,7 +48,8 @@ object Web {
 
 /**
  * Abre una página en un WebView (oculto o no), espera a que cargue lo que va saliendo por JS
- * (capítulos por AJAX, imágenes perezosas…) y devuelve lo encontrado cuando deja de cambiar.
+ * (capítulos por AJAX, imágenes perezosas, botones «Ver más»…) y devuelve lo encontrado cuando
+ * deja de cambiar. [onProgress] avisa en cuanto aparece algo, para no hacer esperar al usuario.
  */
 class PageScraper(private val web: WebView, private val want: Want, private val onDone: (Scraped?) -> Unit) {
     enum class Want { CARDS, CHAPTERS, IMAGES }
@@ -58,12 +59,16 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     private var started = 0L
     private var lastScore = -1
     private var stableTicks = 0
+    private var clicks = 0
     private var last: Scraped? = null
     private var finished = false
     var onPage: ((String) -> Unit)? = null
+    var onProgress: ((Scraped) -> Unit)? = null
 
     init {
         Web.setup(web)
+        // Para series y capítulos no hacen falta las fotos: la página carga mucho más rápido
+        if (want != Want.IMAGES) web.settings.blockNetworkImage = true
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest) = !Web.allowed(req.url.toString())
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) { onPage?.invoke(url) }
@@ -71,16 +76,16 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     }
 
     fun load(url: String) {
-        gen++; finished = false; lastScore = -1; stableTicks = 0; last = null
+        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0; last = null
         started = SystemClock.uptimeMillis()
         web.loadUrl(url)
         val g = gen
-        main.postDelayed({ poll(g) }, 1200)
+        main.postDelayed({ poll(g) }, 700)
     }
 
     /** Vuelve a leer la página actual sin recargarla (p. ej. tras pasar la verificación). */
     fun rescan() {
-        gen++; finished = false; lastScore = -1; stableTicks = 0
+        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0
         started = SystemClock.uptimeMillis()
         val g = gen
         main.postDelayed({ poll(g) }, 300)
@@ -90,6 +95,8 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
 
     private fun poll(g: Int) {
         if (g != gen || finished) return
+        // Listas de capítulos cortadas ("Ver más", "Mostrar todos"): se pulsan solas
+        if (want == Want.CHAPTERS && clicks < MAX_CLICKS) web.evaluateJavascript(MORE_JS) { r -> clicks += r?.toIntOrNull() ?: 0 }
         web.evaluateJavascript(JS) { res ->
             if (g != gen || finished) return@evaluateJavascript
             val s = parse(res)
@@ -101,12 +108,13 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
                     Want.IMAGES -> WebParse.pageImages(it.images).size
                 }
             } ?: 0
+            if (score > lastScore && score > 0 && s != null) onProgress?.invoke(s)
             if (score > 0 && score == lastScore) stableTicks++ else stableTicks = 0
             lastScore = score
             val elapsed = SystemClock.uptimeMillis() - started
-            val done = (score > 0 && stableTicks >= 2 && elapsed > 2500) || elapsed > TIMEOUT_MS
+            val done = (score > 0 && stableTicks >= 2 && elapsed > 1800) || elapsed > TIMEOUT_MS
             if (done) { finished = true; onDone(last) }
-            else main.postDelayed({ poll(g) }, 800)
+            else main.postDelayed({ poll(g) }, 600)
         }
     }
 
