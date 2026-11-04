@@ -8,7 +8,8 @@ import java.net.URI
  * es una serie, qué es un capítulo y qué imágenes son páginas del cómic. Kotlin puro: tiene tests.
  */
 object WebParse {
-    data class RawLink(val url: String, val text: String, val inList: Boolean = false)
+    /** [fromData]: dirección encontrada en los datos de la página (scripts), no en un enlace visible. */
+    data class RawLink(val url: String, val text: String, val inList: Boolean = false, val fromData: Boolean = false)
     data class RawCard(val url: String, val title: String, val image: String)
     data class RawImage(val src: String, val width: Int, val height: Int, val inReader: Boolean = false)
 
@@ -83,12 +84,29 @@ object WebParse {
 
     private fun parent(url: String) = path(url).trimEnd('/').substringBeforeLast('/')
 
+    private val LOGIN = Regex("""(?i)/(auth|login|signin|sign-in|register|registro|wp-login)(/|$|\?|\.)""")
+    // Lo que no es nombre del capítulo: fechas, "hace 3 horas", "Nuevo", "Gratis", emojis…
+    private val NAME_END = Regex("""(?i)(\d|\bhace\b|\bago\b|\bnuevo\b|\bnew\b|\bgratis\b|\bfree\b|\bsin leer\b|\ble[ií]do\b|\btemporada\b|\bseason\b|\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|january|february|march|april|june|july|august|september|october|november|december)\b|\p{So}|[\uD800-\uDFFF])""")
+
+    /** "Capitulo 257 -La Resolución Final- 19 horas ago" → "Capítulo 257: La Resolución Final"; "Capítulo 94 HACE 9 HORAS 💎" → "Capítulo 94". */
+    fun chapterName(text: String, n: Double): String {
+        val base = "Capítulo ${fmt(n)}"
+        val m = CH_TEXT.find(text) ?: return base
+        var rest = text.substring(m.range.last + 1).replace(Regex("\\s+"), " ")
+        NAME_END.find(rest)?.let { rest = rest.substring(0, it.range.first) }
+        rest = rest.trim(' ', '-', ':', '–', '—', '|', '.', ',', '(', '[')
+        return if (rest.length in 3..45 && rest.any { it.isLetter() }) "$base: $rest" else base
+    }
+
     /** Capítulos de la página de una serie, del más nuevo al más antiguo. */
     fun chapters(seriesUrl: String, raw: List<RawLink>): List<Chapter> {
         val seriesKey = key(seriesUrl)
+        val sp = path(seriesUrl).trimEnd('/')
+        fun under(u: String) = sp.length > 1 && path(u).startsWith("$sp/")
         data class C(val link: RawLink, val n: Double, val word: Boolean, val slug: Boolean)
         var cands = raw.mapNotNull { l ->
             if (!l.url.startsWith("http") || !sameSite(l.url, seriesUrl) || key(l.url) == seriesKey) return@mapNotNull null
+            if (LOGIN.containsMatchIn(l.url)) return@mapNotNull null // capítulos de pago que piden cuenta
             val bySlug = numberAfterSlug(seriesUrl, l.url)
             val n = (if (CH_TEXT.containsMatchIn(l.text)) chapterNumber(l.text, l.url) else null)
                 ?: bySlug ?: chapterNumber(l.text, l.url) ?: return@mapNotNull null
@@ -98,23 +116,20 @@ object WebParse {
         // en otra carpeta (/leer/…) o cuando hay varios, sí son capítulos
         val slugged = cands.filter { it.slug }
         val slugOk = slugged.size >= 2 || slugged.any { parent(it.link.url) != parent(seriesUrl) }
-        val listed = cands.filter { it.link.inList }
+        // Enlaces sacados de los datos de la página (webs que solo dibujan 30 y el resto al bajar)
+        val listed = cands.filter { it.link.inList || (it.link.fromData && it.word && under(it.link.url)) }
         cands = when {
             listed.size >= 2 -> listed
-            else -> cands.filter { it.word || (it.slug && slugOk) }
+            else -> cands.filter { !it.link.fromData && (it.word || (it.slug && slugOk)) }
         }
         // Si muchos capítulos cuelgan de la ruta de la serie (/manga/slug/capitulo-1), quédate con esos
-        val sp = path(seriesUrl).trimEnd('/')
         if (sp.length > 1) {
-            val under = cands.filter { path(it.link.url).startsWith("$sp/") }
-            if (under.size >= 2) cands = under
+            val u = cands.filter { under(it.link.url) }
+            if (u.size >= 2) cands = u
         }
         val seenUrl = HashSet<String>(); val seenNum = HashSet<Double>()
         return cands.filter { seenUrl.add(key(it.link.url)) && seenNum.add(it.n) }
-            .map { c ->
-                val name = c.link.text.trim().replace(Regex("\\s+"), " ").take(60)
-                Chapter(c.link.url, if (name.isEmpty() || name.length > 50 || !CH_WORD.containsMatchIn(name)) "Capítulo ${fmt(c.n)}" else name, c.n)
-            }
+            .map { c -> Chapter(c.link.url, chapterName(c.link.text, c.n), c.n) }
             .sortedByDescending { it.number }
     }
 
