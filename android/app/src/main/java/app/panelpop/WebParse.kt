@@ -19,7 +19,7 @@ object WebParse {
     private val CH_TEXT = Regex("""(?i)(?:cap[ií]tulo|chapter|chap|cap|ch|episodio|episode|ep)\.?\s*[-#:]?\s*(\d+(?:[.,]\d+)?)""")
     private val CH_URL = Regex("""(?i)(?:capitulo|chapter|chap|cap|ch|episode|episodio|ep)[-_/]?(\d+(?:[.-]\d+)?)""")
     private val ANY_NUM = Regex("""(\d+(?:[.,]\d+)?)""")
-    private val JUNK_IMG = Regex("""(?i)(logo|avatar|icon|favicon|banner|gravatar|emoji|placeholder|loading|spinner|/ads?[/_.-]|\.svg(\?|$)|\.gif(\?|$)|discord|facebook|twitter|patreon|kofi|ko-fi)""")
+    private val JUNK_IMG = Regex("""(?i)(logo|avatar|icon|favicon|banner|gravatar|emoji|placeholder|loading|spinner|/ads?[/_.-]|\.svg(\?|$)|discord|facebook|twitter|patreon|kofi|ko-fi)""")
     private val NOT_SERIES = Regex("""(?i)/(page|genres?|generos?|tags?|category|categoria|author|autor|artist|login|register|user|account|cuenta|search|buscar|wp-login|feed|privacy|contact|dmca)(/|$|\?)""")
 
     /** "mangadex.org" → "https://mangadex.org/". Null si no parece una web. */
@@ -98,7 +98,7 @@ object WebParse {
         val clean = raw.filter { it.src.startsWith("http") && !JUNK_IMG.containsMatchIn(it.src) }
         val reader = clean.filter { it.inReader }
         val picked = if (reader.size >= 2) reader.filter { it.width == 0 || it.width >= 200 }
-        else clean.filter { it.width >= 400 || it.height >= 600 }
+        else clean.filter { (it.width >= 400 && it.height >= 300) || it.height >= 600 }
         val seen = HashSet<String>()
         return picked.map { it.src }.filter { seen.add(key(it)) }
     }
@@ -114,7 +114,9 @@ object WebParse {
             if (NOT_SERIES.containsMatchIn(path(c.url))) continue
             if (CH_URL.containsMatchIn(path(c.url).substringAfterLast('/').ifEmpty { path(c.url).trimEnd('/').substringAfterLast('/') })) continue
             if (!c.image.startsWith("http") || JUNK_IMG.containsMatchIn(c.image)) continue
-            val title = cleanTitle(c.title).ifEmpty { slugTitle(c.url) }
+            val t0 = cleanTitle(c.title)
+            // "the-demon-king-manhwa" (texto alternativo con el nombre del archivo) → "The Demon King Manhwa"
+            val title = if (t0.isEmpty()) slugTitle(c.url) else if (!t0.contains(' ') && t0.contains('-')) slugTitle("/$t0") else t0
             val prev = byUrl[k]
             if (prev == null || prev.title.length < title.length && title.length <= 80) byUrl[k] = Card(c.url, title, prev?.image ?: c.image)
         }

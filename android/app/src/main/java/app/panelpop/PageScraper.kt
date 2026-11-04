@@ -137,7 +137,7 @@ function src(img){
  return ''}
 function meta(n){var m=document.querySelector('meta[property="'+n+'"],meta[name="'+n+'"]');return m?(m.getAttribute('content')||''):''}
 var h1=document.querySelector('h1');
-var r={url:location.href,title:(h1&&h1.innerText.trim())||meta('og:title')||document.title,cover:'',cards:[],links:[],images:[],next:'',prev:''};
+var r={url:location.href,title:(h1&&h1.textContent.trim())||meta('og:title')||document.title,cover:'',cards:[],links:[],images:[],next:'',prev:''};
 var ci=document.querySelector('.summary_image img,.thumb img,.manga-thumb img,.series-thumb img,.manga-info-pic img,.info-image img,.cover img,img.cover,.poster img');
 r.cover=(ci&&src(ci))||abs(meta('og:image')||'');
 var LIST='.wp-manga-chapter,#chapterlist,.chapter-list,.chapters,.eplister,.listing-chapters_wrap,.version-chap,.chapter-item,.row-content-chapter,.list-chapter,[class*=chapter],[id*=chapter],[class*=episode]';
@@ -145,7 +145,8 @@ var as=document.querySelectorAll('a[href]');
 for(var i=0;i<as.length&&i<5000;i++){var a=as[i];var href=abs(a.getAttribute('href'));if(!href||href.indexOf('http')!==0)continue;
  var txt=(a.innerText||a.getAttribute('title')||'').trim().replace(/\s+/g,' ').slice(0,120);
  var img=a.querySelector('img');
- if(img){r.cards.push({u:href,t:(a.getAttribute('title')||img.getAttribute('alt')||txt||'').trim().slice(0,120),i:src(img)})}
+ if(img){var box=a.closest('.page-item-detail,.manga-item,.bs,.bsx,.utao,.item,article,li,.card,[class*=card]');var tt=box&&box.querySelector('h3,h4,h5,.post-title,.tt,.title,[class*=title]');
+  r.cards.push({u:href,t:((tt&&tt.textContent)||a.getAttribute('title')||img.getAttribute('alt')||txt||'').trim().replace(/\s+/g,' ').slice(0,120),i:src(img)})}
  if(/\d/.test(txt+href)){r.links.push({u:href,t:txt,c:a.closest(LIST)?1:0})}
  var hint=((a.getAttribute('rel')||'')+' '+(a.className||'')+' '+txt).toLowerCase();
  if(!r.next&&/(^|\s)(next|siguiente|sig\.?|pr[oó]ximo)(\s|$|_)|next_page|nextchap|next-chap/.test(hint))r.next=href;
