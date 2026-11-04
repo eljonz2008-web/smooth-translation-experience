@@ -150,4 +150,7 @@ class WebParseTest {
         assertEquals(46, got.size)
         assertEquals(46.0, got.first().number, 0.0)
     }
+
+    @Test fun typeLabelStuckToTitleIsRemoved() =
+        assertEquals("Quiero Trabajar Tranquilamente", WebParse.cleanTitle("manhwaQuiero Trabajar Tranquilamente"))
 }
