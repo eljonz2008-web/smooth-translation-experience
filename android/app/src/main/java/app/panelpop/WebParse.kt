@@ -129,7 +129,7 @@ object WebParse {
         }
         val seenUrl = HashSet<String>(); val seenNum = HashSet<Double>()
         return cands.filter { seenUrl.add(key(it.link.url)) && seenNum.add(it.n) }
-            .map { c -> Chapter(c.link.url, chapterName(c.link.text, c.n), c.n) }
+            .map { c -> Chapter(c.link.url, chapterName(c.link.text, c.n), c.n, chapterDate(c.link.text)) }
             .sortedByDescending { it.number }
     }
 
