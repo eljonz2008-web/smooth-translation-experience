@@ -394,6 +394,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume(); refresh()
+        if (::libraryPage.isInitialized) when (tab) { 0 -> libraryPage.refresh(); 1 -> explorePage.refresh() }
         LangModels.refresh { langRows.forEach { it.update() } }
     }
 
