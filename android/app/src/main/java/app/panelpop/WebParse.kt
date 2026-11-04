@@ -19,8 +19,10 @@ object WebParse {
     private val CH_TEXT = Regex("""(?i)(?:cap[ií]tulo|chapter|chap|cap|ch|episodio|episode|ep)\.?\s*[-#:]?\s*(\d+(?:[.,]\d+)?)""")
     private val CH_URL = Regex("""(?i)(?:capitulo|chapter|chap|cap|ch|episode|episodio|ep)[-_/]?(\d+(?:[.-]\d+)?)""")
     private val ANY_NUM = Regex("""(\d+(?:[.,]\d+)?)""")
-    private val JUNK_IMG = Regex("""(?i)(logo|avatar|icon|favicon|banner|gravatar|emoji|placeholder|loading|spinner|/ads?[/_.-]|\.svg(\?|$)|discord|facebook|twitter|patreon|kofi|ko-fi)""")
-    private val NOT_SERIES = Regex("""(?i)/(page|genres?|generos?|tags?|category|categoria|author|autor|artist|login|register|user|account|cuenta|search|buscar|wp-login|feed|privacy|contact|dmca)(/|$|\?)""")
+    private val JUNK_IMG = Regex("""(?i)(logo|avatar|icon|favicon|banner|baner|gravatar|emoji|placeholder|loading|spinner|/ads?[/_.-]|\.svg(\?|$)|discord|facebook|twitter|patreon|kofi|ko-fi)""")
+    private val NOT_SERIES = Regex("""(?i)/(page|genres?|generos?|tags?|category|categoria|author|autor|artist|login|register|user|account|cuenta|search|buscar|wp-login|feed|privacy|contact|dmca|uploads?|foro|forum|rank|ranking|grupos?|groups?|perfil|profile|calendar|calendario|library|biblioteca)(/|$|\?)""")
+    // Lo que va detrás del nombre de la serie: "-12_01", "-176.5", "-capitulo-3"
+    private val AFTER_SLUG = Regex("""(?i)^[-_.]+(?:(?:cap[ií]tulo|chapter|chap|cap|ch|episodio|episode|ep)[-_.]?)?(\d+(?:\.\d+)?)(?:$|[-_/?#])""")
 
     /** "mangadex.org" → "https://mangadex.org/". Null si no parece una web. */
     fun normalizeUrl(input: String): String? {
@@ -64,19 +66,39 @@ object WebParse {
 
     private fun fmt(n: Double) = if (n % 1.0 == 0.0) n.toLong().toString() else n.toString()
 
+    /**
+     * Webs como ManhwaWeb ponen el número detrás del nombre de la serie y no escriben "Capítulo":
+     * serie /manhwa/hoja-del-norte_169 → capítulo /leer/hoja-del-norte_169-12_01 = 12.
+     */
+    fun numberAfterSlug(seriesUrl: String, url: String): Double? {
+        val slug = path(seriesUrl).trimEnd('/').substringAfterLast('/')
+        if (slug.length < 4) return null
+        val seg = path(url).trimEnd('/').substringAfterLast('/')
+        if (seg.length <= slug.length || !seg.startsWith(slug, true)) return null
+        return AFTER_SLUG.find(seg.substring(slug.length))?.groupValues?.get(1)?.toDoubleOrNull()
+    }
+
+    private fun parent(url: String) = path(url).trimEnd('/').substringBeforeLast('/')
+
     /** Capítulos de la página de una serie, del más nuevo al más antiguo. */
     fun chapters(seriesUrl: String, raw: List<RawLink>): List<Chapter> {
         val seriesKey = key(seriesUrl)
-        data class C(val link: RawLink, val n: Double, val word: Boolean)
+        data class C(val link: RawLink, val n: Double, val word: Boolean, val slug: Boolean)
         var cands = raw.mapNotNull { l ->
             if (!l.url.startsWith("http") || !sameSite(l.url, seriesUrl) || key(l.url) == seriesKey) return@mapNotNull null
-            val n = chapterNumber(l.text, l.url) ?: return@mapNotNull null
-            C(l, n, CH_WORD.containsMatchIn(l.text) || CH_URL.containsMatchIn(path(l.url)))
+            val bySlug = numberAfterSlug(seriesUrl, l.url)
+            val n = (if (CH_TEXT.containsMatchIn(l.text)) chapterNumber(l.text, l.url) else null)
+                ?: bySlug ?: chapterNumber(l.text, l.url) ?: return@mapNotNull null
+            C(l, n, CH_WORD.containsMatchIn(l.text) || CH_URL.containsMatchIn(path(l.url)), bySlug != null)
         }
+        // "nombre-de-la-serie-2" en la misma carpeta suele ser la temporada 2, no un capítulo;
+        // en otra carpeta (/leer/…) o cuando hay varios, sí son capítulos
+        val slugged = cands.filter { it.slug }
+        val slugOk = slugged.size >= 2 || slugged.any { parent(it.link.url) != parent(seriesUrl) }
         val listed = cands.filter { it.link.inList }
         cands = when {
             listed.size >= 2 -> listed
-            else -> cands.filter { it.word }
+            else -> cands.filter { it.word || (it.slug && slugOk) }
         }
         // Si muchos capítulos cuelgan de la ruta de la serie (/manga/slug/capitulo-1), quédate con esos
         val sp = path(seriesUrl).trimEnd('/')
@@ -97,8 +119,14 @@ object WebParse {
     fun pageImages(raw: List<RawImage>): List<String> {
         val clean = raw.filter { it.src.startsWith("http") && !JUNK_IMG.containsMatchIn(it.src) }
         val reader = clean.filter { it.inReader }
-        val picked = if (reader.size >= 2) reader.filter { it.width == 0 || it.width >= 200 }
-        else clean.filter { (it.width >= 400 && it.height >= 300) || it.height >= 600 }
+        // Si no hay zona de lectura reconocible: las páginas viven juntas en la misma carpeta
+        // (…/chapter_5/001.webp, 002.webp…), aunque aún no se hayan cargado (tamaño 0)
+        val folder = clean.groupBy { it.src.substringBefore('?').substringBeforeLast('/') }.values.maxByOrNull { it.size }
+        val picked = when {
+            reader.size >= 2 -> reader.filter { it.width == 0 || it.width >= 200 }
+            folder != null && folder.size >= 3 -> folder.filter { it.width == 0 || it.width >= 200 }
+            else -> clean.filter { (it.width >= 400 && it.height >= 300) || it.height >= 600 }
+        }
         val seen = HashSet<String>()
         return picked.map { it.src }.filter { seen.add(key(it)) }
     }
