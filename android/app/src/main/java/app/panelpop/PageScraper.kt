@@ -23,6 +23,11 @@ class Scraped(
     val images: List<WebParse.RawImage>,
     val next: String,
     val prev: String,
+    val desc: String = "",
+    val genres: List<String> = emptyList(),
+    /** Formulario de búsqueda de la página (para aprender cómo busca la web). */
+    val searchAction: String = "",
+    val searchField: String = "",
 )
 
 object Web {
@@ -64,6 +69,10 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     private var finished = false
     var onPage: ((String) -> Unit)? = null
     var onProgress: ((Scraped) -> Unit)? = null
+    /** Modo búsqueda: solo cuentan las series cuyo título coincide con [query]. */
+    private var query = ""
+    private var typeQuery = false
+    private var typed = false
 
     init {
         Web.setup(web)
@@ -84,7 +93,21 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     private var clicked = false
 
     fun load(url: String) {
-        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0; clicked = false; last = null
+        query = ""; typeQuery = false
+        start(url)
+    }
+
+    /**
+     * Busca [q]: abre [url] (la dirección de búsqueda) o, si [type] es true, la portada y escribe
+     * en su caja de búsqueda, como haría una persona.
+     */
+    fun search(url: String, q: String, type: Boolean) {
+        query = q; typeQuery = type
+        start(url)
+    }
+
+    private fun start(url: String) {
+        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0; clicked = false; typed = false; last = null
         started = SystemClock.uptimeMillis()
         here = url
         web.loadUrl(url)
@@ -105,6 +128,7 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     private fun poll(g: Int) {
         if (g != gen || finished) return
         // Listas de capítulos cortadas ("Ver más", "Mostrar todos"): se pulsan solas
+        if (typeQuery && !typed) web.evaluateJavascript(TYPE_JS.replace("__Q__", JSONObject.quote(query))) { r -> if (r == "1") typed = true }
         if (want == Want.CHAPTERS && clicks < MAX_CLICKS) {
             clicked = true
             web.evaluateJavascript(MORE_JS) { r -> clicks += r?.toIntOrNull() ?: 0 }
@@ -115,7 +139,7 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
             if (s != null) last = s
             val score = s?.let {
                 when (want) {
-                    Want.CARDS -> WebParse.seriesCards(it.url, it.cards).size
+                    Want.CARDS -> if (query.isNotEmpty()) WebParse.searchResults(it.url, it.cards, query).size else WebParse.seriesCards(it.url, it.cards).size
                     Want.CHAPTERS -> WebParse.chapters(it.url, it.links).size
                     Want.IMAGES -> WebParse.pageImages(it.images).size
                 }
@@ -124,7 +148,7 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
             if (score > 0 && score == lastScore) stableTicks++ else stableTicks = 0
             lastScore = score
             val elapsed = SystemClock.uptimeMillis() - started
-            val done = (score > 0 && stableTicks >= 2 && elapsed > 1800) || elapsed > TIMEOUT_MS
+            val done = (score > 0 && stableTicks >= 2 && elapsed > 1800) || elapsed > (if (query.isNotEmpty()) SEARCH_TIMEOUT_MS else TIMEOUT_MS)
             if (done) { finished = true; onDone(last) }
             else main.postDelayed({ poll(g) }, 600)
         }
@@ -138,12 +162,25 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
             o.optJSONArray("cards")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { cards.add(WebParse.RawCard(it.optString("u"), it.optString("t"), it.optString("i"))) } }
             o.optJSONArray("links")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { links.add(WebParse.RawLink(it.optString("u"), it.optString("t"), it.optInt("c") == 1, it.optInt("c") == 2)) } }
             o.optJSONArray("images")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { imgs.add(WebParse.RawImage(it.optString("s"), it.optInt("w"), it.optInt("h"), it.optInt("r") == 1)) } }
-            Scraped(o.optString("url"), o.optString("title"), o.optString("cover"), cards, links, imgs, o.optString("next"), o.optString("prev"))
+            val genres = ArrayList<String>()
+            o.optJSONArray("genres")?.let { a -> for (i in 0 until a.length()) genres.add(a.optString(i)) }
+            Scraped(o.optString("url"), o.optString("title"), o.optString("cover"), cards, links, imgs, o.optString("next"), o.optString("prev"),
+                o.optString("desc"), genres, o.optString("sa"), o.optString("sn"))
         }
     } catch (e: Exception) { null }
 
     companion object {
         const val TIMEOUT_MS = 15_000L
+        const val SEARCH_TIMEOUT_MS = 12_000L
+
+        // Escribe la búsqueda en la caja de la web (abre la lupa si hace falta). Devuelve 1 al escribir.
+        private const val TYPE_JS = """(function(q){function vis(e){return e&&e.offsetParent!==null}
+var ins=[].slice.call(document.querySelectorAll('input[type=search],input[name=s],input[name=q],input[name=search],input[placeholder*="usca" i],input[placeholder*="earch" i]')).filter(vis);
+if(!ins.length){var b=[].slice.call(document.querySelectorAll('button,a,[role=button]')).filter(function(e){var t=((e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')+' '+(e.textContent||'')).toLowerCase();var h=e.getAttribute('href')||'';return vis(e)&&/buscar|search|busca/.test(t)&&!/^https?:/.test(h)&&t.length<40})[0];if(b){try{b.click()}catch(x){}}return 0}
+var i=ins[0];i.focus();var st=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;st.call(i,q);
+i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));
+['keydown','keypress','keyup'].forEach(function(n){i.dispatchEvent(new KeyboardEvent(n,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}))});
+return 1})(__Q__)"""
         private const val MAX_CLICKS = 40
 
         // Pulsa botones tipo «Ver más / Mostrar todos» que no lleven a otra página. Devuelve cuántos pulsó.
@@ -192,6 +229,14 @@ for(var q=0;q<sc.length&&nd<3000&&budget>0;q++){var tx=sc[q].textContent||'';if(
  var ms=tx.replace(/\\\//g,'/').match(/https?:\/\/[^"'\s<>\\)]+/g)||[];
  for(var y=0;y<ms.length&&nd<3000;y++){var u=ms[y];if(seenL[u]||!/\d/.test(u))continue;var hh='';try{hh=new URL(u).host}catch(e){continue}
   if(hh.replace(/^www\./,'')!==location.host.replace(/^www\./,''))continue;seenL[u]=1;nd++;r.links.push({u:u,t:'',c:2})}}
+// Sinopsis, géneros y formulario de búsqueda
+var ds=document.querySelector('.summary__content,.description-summary,.manga-excerpt,[class*=synopsis],[class*=sinopsis],[itemprop=description],[class*=summary] p,[class*=description]');
+r.desc=((ds&&ds.innerText)||meta('og:description')||meta('description')||'').trim().slice(0,2000);
+var GEN=/(genre|genero|g%C3%A9nero|generos|genres|genders|tag|tags|category|categoria)s?([\/=?]|$)/i;r.genres=[];
+var ga=document.querySelectorAll('a[href]');for(var gi=0;gi<ga.length&&r.genres.length<15;gi++){var gx=ga[gi];if(!GEN.test(gx.getAttribute('href')||''))continue;
+ if(gx.closest('nav,header,footer,aside,[class*=menu],[class*=nav],[class*=footer],[class*=sidebar],[class*=widget]'))continue;var gt=(gx.innerText||'').trim();if(gt&&gt.length<30)r.genres.push(gt)}
+var sf=document.querySelector('form input[type=search],form input[name=s],form input[name=q],form input[name=search],form input[name=buscar],form input[name=keyword],form input[name=query]');
+if(sf){var fm=sf.closest('form');r.sa=fm.getAttribute('action')||'';r.sn=sf.getAttribute('name')||''}
 var READER='.reading-content,#readerarea,.page-break,.container-chapter-reader,.reader-area,.chapter-content,#chapter-images,.chapter-images,.chapter-container,.read-container,[class*=reader],[id*=reader]';
 var im=document.querySelectorAll('img');
 for(var j=0;j<im.length&&j<800;j++){var g=im[j];var s=src(g);if(!s)continue;
