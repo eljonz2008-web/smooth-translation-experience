@@ -12,7 +12,7 @@ object Recommended {
         Site("Olympus Scan", "https://olympusbiblioteca.com/", "Acción, fantasía, murim y regresión", WebParse.TYPE_SEARCH),
         Site("MHScans", "https://mhscans.com/", "Manhwas y manhuas de acción y sistema", "/search?q={q}"),
         Site("LectorJPG", "https://lectorjpg.com/", "Romance, BL y novelas", "/series?name={q}", adult = true),
-        Site("Dragon Translation", "https://dragontranslation.org/", "Manhwas para adultos", "/?s={q}", adult = true),
+        Site("Dragon Translation", "https://dragontranslation.org/", "Manhwas para adultos", "/?s={q}&post_type=wp-manga", adult = true),
     )
 
     /** Plantilla de búsqueda conocida para una web (también si redirige a otro dominio). */
