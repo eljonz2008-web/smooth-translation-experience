@@ -73,7 +73,7 @@ object WebParse {
             val n = chapterNumber(l.text, l.url) ?: return@mapNotNull null
             C(l, n, CH_WORD.containsMatchIn(l.text) || CH_URL.containsMatchIn(path(l.url)))
         }
-        val listed = cands.filter { it.inListOk() }
+        val listed = cands.filter { it.link.inList }
         cands = when {
             listed.size >= 2 -> listed
             else -> cands.filter { it.word }
@@ -92,9 +92,6 @@ object WebParse {
             }
             .sortedByDescending { it.number }
     }
-
-    private fun Any.inListOk(): Boolean = this is Pair<*, *> // placeholder never used
-    private val Any.dummy get() = 0
 
     /** Imágenes de un capítulo, en orden, sin logos ni anuncios. */
     fun pageImages(raw: List<RawImage>): List<String> {
