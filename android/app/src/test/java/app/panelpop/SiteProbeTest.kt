@@ -19,7 +19,7 @@ class SiteProbeTest {
                     "T" -> title = p.getOrElse(1) { "" }
                     "V" -> cover = p.getOrElse(1) { "" }
                     "C" -> cards.add(WebParse.RawCard(p[1], p.getOrElse(2) { "" }, p.getOrElse(3) { "" }))
-                    "L" -> links.add(WebParse.RawLink(p[1], p.getOrElse(2) { "" }, p.getOrElse(3) { "0" } == "1"))
+                    "L" -> links.add(WebParse.RawLink(p[1], p.getOrElse(2) { "" }, p.getOrElse(3) { "0" } == "1", p.getOrElse(3) { "0" } == "2"))
                     "I" -> imgs.add(WebParse.RawImage(p[1], p[2].toInt(), p[3].toInt(), p[4] == "1"))
                 }
             }
