@@ -70,14 +70,23 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
         // Para series y capítulos no hacen falta las fotos: la página carga mucho más rápido
         if (want != Want.IMAGES) web.settings.blockNetworkImage = true
         web.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest) = !Web.allowed(req.url.toString())
-            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) { onPage?.invoke(url) }
+            override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
+                val u = req.url.toString()
+                if (!Web.allowed(u)) return true
+                // Después de pulsar «Ver más», algunas webs abren anuncios de otra web: se bloquean
+                return clicked && req.isForMainFrame && !req.isRedirect && here.isNotEmpty() && !WebParse.sameSite(u, here)
+            }
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) { here = url; onPage?.invoke(url) }
         }
     }
 
+    private var here = ""
+    private var clicked = false
+
     fun load(url: String) {
-        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0; last = null
+        gen++; finished = false; lastScore = -1; stableTicks = 0; clicks = 0; clicked = false; last = null
         started = SystemClock.uptimeMillis()
+        here = url
         web.loadUrl(url)
         val g = gen
         main.postDelayed({ poll(g) }, 700)
@@ -96,7 +105,10 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     private fun poll(g: Int) {
         if (g != gen || finished) return
         // Listas de capítulos cortadas ("Ver más", "Mostrar todos"): se pulsan solas
-        if (want == Want.CHAPTERS && clicks < MAX_CLICKS) web.evaluateJavascript(MORE_JS) { r -> clicks += r?.toIntOrNull() ?: 0 }
+        if (want == Want.CHAPTERS && clicks < MAX_CLICKS) {
+            clicked = true
+            web.evaluateJavascript(MORE_JS) { r -> clicks += r?.toIntOrNull() ?: 0 }
+        }
         web.evaluateJavascript(JS) { res ->
             if (g != gen || finished) return@evaluateJavascript
             val s = parse(res)
