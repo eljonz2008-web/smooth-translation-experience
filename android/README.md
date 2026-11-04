@@ -22,6 +22,7 @@
 - `ReaderActivity` — saca las páginas del capítulo y las muestra limpias en vertical, con Anterior/Siguiente y botón **ES** para encender el traductor.
 - `BrowserActivity` — navegador interno para pasar verificaciones de la web o abrir una serie/capítulo a mano.
 - `PageScraper` lee cada página en un WebView (con JS, cookies y carga perezosa); `WebParse` (Kotlin puro, con tests) decide qué son series, capítulos y páginas. `Library` guarda todo en un JSON local.
+- Los capítulos salen en cuanto aparecen; los botones «Ver más» se pulsan solos (bloqueando anuncios que lleven a otra web) y también se leen los capítulos escondidos en los datos de la página. Probado con MHScans, LectorJPG, DragonTranslation, ManhwaWeb y Olympus Scan.
 
 Las capturas solo viven en memoria y se descartan tras el OCR. No hay claves secretas.
 La primera vez se descarga el modelo de traducción (~30 MB) por idioma. `LangModels` descarga siempre en segundo plano (nunca bloquea el traductor); la pantalla principal tiene la tarjeta «Idiomas descargados» para bajarlos antes con Wi‑Fi.
