@@ -136,7 +136,7 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
             val o = JSONObject(str)
             val cards = ArrayList<WebParse.RawCard>(); val links = ArrayList<WebParse.RawLink>(); val imgs = ArrayList<WebParse.RawImage>()
             o.optJSONArray("cards")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { cards.add(WebParse.RawCard(it.optString("u"), it.optString("t"), it.optString("i"))) } }
-            o.optJSONArray("links")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { links.add(WebParse.RawLink(it.optString("u"), it.optString("t"), it.optInt("c") == 1)) } }
+            o.optJSONArray("links")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { links.add(WebParse.RawLink(it.optString("u"), it.optString("t"), it.optInt("c") == 1, it.optInt("c") == 2)) } }
             o.optJSONArray("images")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { imgs.add(WebParse.RawImage(it.optString("s"), it.optInt("w"), it.optInt("h"), it.optInt("r") == 1)) } }
             Scraped(o.optString("url"), o.optString("title"), o.optString("cover"), cards, links, imgs, o.optString("next"), o.optString("prev"))
         }
@@ -185,6 +185,13 @@ for(var i=0;i<as.length&&i<5000;i++){var a=as[i];var href=abs(a.getAttribute('hr
  if(!r.next&&/(^|\s)(next|siguiente|sig\.?|pr[oó]ximo)(\s|$|_)|next_page|nextchap|next-chap/.test(hint))r.next=href;
  if(!r.prev&&/(^|\s)(prev|previous|anterior|ant\.?)(\s|$|_)|prev_page|prevchap|prev-chap/.test(hint))r.prev=href;
 }
+// Direcciones escondidas en los datos de la página (listas que se dibujan al bajar, webs tipo app)
+var seenL={};for(var z=0;z<r.links.length;z++)seenL[r.links[z].u]=1;
+var sc=document.querySelectorAll('script:not([src])');var budget=2000000,nd=0;
+for(var q=0;q<sc.length&&nd<3000&&budget>0;q++){var tx=sc[q].textContent||'';if(tx.length<40)continue;budget-=tx.length;
+ var ms=tx.replace(/\\\//g,'/').match(/https?:\/\/[^"'\s<>\\)]+/g)||[];
+ for(var y=0;y<ms.length&&nd<3000;y++){var u=ms[y];if(seenL[u]||!/\d/.test(u))continue;var hh='';try{hh=new URL(u).host}catch(e){continue}
+  if(hh.replace(/^www\./,'')!==location.host.replace(/^www\./,''))continue;seenL[u]=1;nd++;r.links.push({u:u,t:'',c:2})}}
 var READER='.reading-content,#readerarea,.page-break,.container-chapter-reader,.reader-area,.chapter-content,#chapter-images,.chapter-images,.chapter-container,.read-container,[class*=reader],[id*=reader]';
 var im=document.querySelectorAll('img');
 for(var j=0;j<im.length&&j<800;j++){var g=im[j];var s=src(g);if(!s)continue;

@@ -86,7 +86,7 @@ object WebParse {
 
     private val LOGIN = Regex("""(?i)/(auth|login|signin|sign-in|register|registro|wp-login)(/|$|\?|\.)""")
     // Lo que no es nombre del capítulo: fechas, "hace 3 horas", "Nuevo", "Gratis", emojis…
-    private val NAME_END = Regex("""(?i)(\d|\bhace\b|\bago\b|\bnuevo\b|\bnew\b|\bgratis\b|\bfree\b|\bsin leer\b|\ble[ií]do\b|\btemporada\b|\bseason\b|\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|january|february|march|april|june|july|august|september|october|november|december)\b|\p{So}|[\uD800-\uDFFF])""")
+    private val NAME_END = Regex("""(?i)(\d|\bhace\b|\bago\b|\bnuevo\b|\bnew\b|\bgratis\b|\bfree\b|\bsin leer\b|\ble[ií]do\b|\btemporada\b|\bseason\b|\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|january|february|march|april|june|july|august|september|october|november|december)\b|\p{So})""")
 
     /** "Capitulo 257 -La Resolución Final- 19 horas ago" → "Capítulo 257: La Resolución Final"; "Capítulo 94 HACE 9 HORAS 💎" → "Capítulo 94". */
     fun chapterName(text: String, n: Double): String {
