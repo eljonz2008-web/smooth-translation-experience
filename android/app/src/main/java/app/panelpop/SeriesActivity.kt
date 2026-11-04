@@ -137,7 +137,9 @@ class SeriesActivity : Activity() {
         if (res != null) {
             val t = WebParse.cleanTitle(res.title)
             if (t.isNotEmpty() && t.length <= 120) series.title = t
-            if (res.cover.startsWith("http") && (series.cover.isEmpty() || !WebParse.looksLikeLogo(res.cover))) series.cover = res.cover
+            // Algunas webs ponen como "imagen" la propia página o su logo: entonces se queda la portada de la cuadrícula
+            if (res.cover.startsWith("http") && WebParse.key(res.cover) != WebParse.key(res.url) && WebParse.key(res.cover) != WebParse.key(series.url) &&
+                (series.cover.isEmpty() || !WebParse.looksLikeLogo(res.cover))) series.cover = res.cover
             val chs = WebParse.chapters(res.url.ifEmpty { series.url }, res.links)
             if (chs.isNotEmpty()) series.chapters = chs
             if (series.inLibrary || series.read.isNotEmpty()) Library.save()
