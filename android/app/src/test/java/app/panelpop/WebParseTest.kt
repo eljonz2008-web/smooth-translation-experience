@@ -122,4 +122,32 @@ class WebParseTest {
         ))
         assertEquals(listOf("Ao no Flag"), got.map { it.title })
     }
+
+    @Test fun chapterNamesLoseDatesAndBadges() {
+        assertEquals("Capítulo 94", WebParse.chapterName("Capítulo 94 HACE 9 HORAS NUEVO 💎 90", 94.0))
+        assertEquals("Capítulo 35", WebParse.chapterName("Capitulo 35 - 🎵 11/09/2026 TEMPORADA 2", 35.0))
+        assertEquals("Capítulo 30", WebParse.chapterName("30 Capitulo 30 julio 12, 2026", 30.0))
+        assertEquals("Capítulo 257: La Resolución Final", WebParse.chapterName("Capitulo 257 -La Resolución Final- 19 horas ago", 257.0))
+    }
+
+    @Test fun paidChaptersThatAskForLoginAreSkipped() {
+        val s = "https://mhscans.com/comics/mhscans-el-inversionista-que-ve-el-futuro"
+        val got = WebParse.chapters(s, listOf(
+            RawLink("https://mhscans.com/auth/login?redirect=%2Fcomics%2Fx", "Capítulo 94 HACE 9 HORAS 💎", true),
+            RawLink("https://mhscans.com/leer/r_iq_uFWdqSZeLAWReqNT", "Capítulo 80 GRATIS", true),
+            RawLink("https://mhscans.com/leer/kAcNltf4qKEHZjcXhXVbR", "Capítulo 79 GRATIS", true),
+        ))
+        assertEquals(listOf(80.0, 79.0), got.map { it.number })
+    }
+
+    // DragonTranslation dibuja 30 capítulos y guarda el resto en los datos de la página
+    @Test fun chaptersHiddenInPageDataAreAdded() {
+        val s = "https://dragontranslation.org/manga/quiero-trabajar-tranquilamente/"
+        fun ch(n: Int) = "${s}capitulo-$n/"
+        val got = WebParse.chapters(s, listOf(RawLink(ch(1), "1 Capitulo 1 enero 20, 2026", true), RawLink(ch(2), "2 Capitulo 2", true)) +
+            (1..46).map { RawLink(ch(it), "", fromData = true) } +
+            RawLink("https://dragontranslation.org/manga/otra-serie/capitulo-9/", "", fromData = true))
+        assertEquals(46, got.size)
+        assertEquals(46.0, got.first().number, 0.0)
+    }
 }
