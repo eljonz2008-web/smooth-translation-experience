@@ -131,7 +131,15 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     } catch (e: Exception) { null }
 
     companion object {
-        const val TIMEOUT_MS = 18_000L
+        const val TIMEOUT_MS = 15_000L
+        private const val MAX_CLICKS = 40
+
+        // Pulsa botones tipo «Ver más / Mostrar todos» que no lleven a otra página. Devuelve cuántos pulsó.
+        private const val MORE_JS = """(function(){var n=0;var els=document.querySelectorAll('button,a,div,span,li');
+for(var i=0;i<els.length&&n<3;i++){var e=els[i];if(e.children.length>2)continue;var t=(e.textContent||'').trim();
+if(t.length>40||!/^(ver|mostrar|cargar|show|load|view)\s+(m[aá]s|more|todos|todo|all)/i.test(t))continue;
+if(e.tagName=='A'){var h=e.getAttribute('href')||'';if(h&&h!='#'&&h.indexOf('javascript')!=0)continue}
+if(e.offsetParent===null)continue;try{e.click();n++}catch(x){}}return n})()"""
 
         // Sirve para casi todas las webs de mangas (WordPress Madara, MangaThemesia y genéricas)
         private const val JS = """(function(){
@@ -143,18 +151,22 @@ function src(img){
  c.push(img.currentSrc);c.push(img.getAttribute('src'));
  for(var i=0;i<c.length;i++){var v=(c[i]||'').trim();if(v&&v.indexOf('data:')!==0)return abs(v)}
  return ''}
+function bgOf(el){var m=/url\(["']?([^"')]+)/.exec(el.getAttribute('style')||'');return m?abs(m[1]):''}
 function meta(n){var m=document.querySelector('meta[property="'+n+'"],meta[name="'+n+'"]');return m?(m.getAttribute('content')||''):''}
 var h1=document.querySelector('h1');
 var r={url:location.href,title:(h1&&h1.textContent.trim())||meta('og:title')||document.title,cover:'',cards:[],links:[],images:[],next:'',prev:''};
 var ci=document.querySelector('.summary_image img,.thumb img,.manga-thumb img,.series-thumb img,.manga-info-pic img,.info-image img,.cover img,img.cover,.poster img');
 r.cover=(ci&&src(ci))||abs(meta('og:image')||'');
 var LIST='.wp-manga-chapter,#chapterlist,.chapter-list,.chapters,.eplister,.listing-chapters_wrap,.version-chap,.chapter-item,.row-content-chapter,.list-chapter,[class*=chapter],[id*=chapter],[class*=episode]';
+var TT='h3,h4,h5,.post-title,.tt,.title,[class*=title]';
 var as=document.querySelectorAll('a[href]');
 for(var i=0;i<as.length&&i<5000;i++){var a=as[i];var href=abs(a.getAttribute('href'));if(!href||href.indexOf('http')!==0)continue;
  var txt=(a.innerText||a.getAttribute('title')||'').trim().replace(/\s+/g,' ').slice(0,120);
- var img=a.querySelector('img');
- if(img){var box=a.closest('.page-item-detail,.manga-item,.bs,.bsx,.utao,.item,article,li,.card,[class*=card]');var tt=box&&box.querySelector('h3,h4,h5,.post-title,.tt,.title,[class*=title]');
-  r.cards.push({u:href,t:((tt&&tt.textContent)||a.getAttribute('title')||img.getAttribute('alt')||txt||'').trim().replace(/\s+/g,' ').slice(0,120),i:src(img)})}
+ var img=a.querySelector('img');var bg='';
+ if(!img){var be=a.matches('[style*=background-image]')?a:a.querySelector('[style*=background-image]');if(be)bg=bgOf(be)}
+ if(img||bg){var box=a.closest('.page-item-detail,.manga-item,.bs,.bsx,.utao,.item,article,li,.card,[class*=card]');
+  var tt=a.querySelector(TT);if(!tt&&box&&box.querySelectorAll('a img,a [style*=background-image]').length<=2)tt=box.querySelector(TT);
+  r.cards.push({u:href,t:((tt&&tt.textContent)||a.getAttribute('title')||a.getAttribute('aria-label')||(img&&img.getAttribute('alt'))||txt||'').trim().replace(/\s+/g,' ').slice(0,120),i:img?src(img):bg})}
  if(/\d/.test(txt+href)){r.links.push({u:href,t:txt,c:a.closest(LIST)?1:0})}
  var hint=((a.getAttribute('rel')||'')+' '+(a.className||'')+' '+txt).toLowerCase();
  if(!r.next&&/(^|\s)(next|siguiente|sig\.?|pr[oó]ximo)(\s|$|_)|next_page|nextchap|next-chap/.test(hint))r.next=href;
