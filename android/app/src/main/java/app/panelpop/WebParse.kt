@@ -172,6 +172,8 @@ object WebParse {
     /** "Solo Leveling – Leer manga online | MiWeb" → "Solo Leveling" */
     fun cleanTitle(t: String): String {
         var s = t.trim().replace(Regex("\\s+"), " ")
+        // "manhwaQuiero Trabajar…": la etiqueta del tipo pegada al título
+        s = s.replace(Regex("""^(manhwa|manhua|manga|novela|novel|webtoon)(?=\p{Lu})"""), "")
         for (sep in listOf(" | ", " – ", " — ", " « ", " » ")) if (s.contains(sep)) s = s.substringBefore(sep)
         s = s.replace(Regex("""(?i)^(leer|read)\s+"""), "").replace(Regex("""(?i)\s+(manga|manhwa|manhua)?\s*(online|en español|español|sub español)$"""), "")
         return s.trim()
