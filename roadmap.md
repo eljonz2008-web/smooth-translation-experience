@@ -5,5 +5,6 @@
 - [x] Ficha de serie: portada, lista de capítulos, guardar en Biblioteca
 - [x] Lector propio (páginas en vertical, anterior/siguiente, botón traducir)
 - [x] Biblioteca con portadas y capítulos sin leer (como la foto de Mihon)
-- [ ] Ajustar para las webs del usuario: MHScans, LectorJPG, DragonTranslation, ManhwaWeb, Olympus Scan
-- [ ] Capítulos tardan mucho en cargar: hacerlo más rápido (mostrar guardados al instante, no esperar de más)
+- [x] Ajustar para las webs del usuario: MHScans, LectorJPG, DragonTranslation, ManhwaWeb, Olympus Scan
+- [x] Capítulos tardan mucho en cargar: salen al instante y se van añadiendo
+- [ ] Búsqueda dentro de webs tipo app (ManhwaWeb, LectorJPG, Olympus) — sin comprobar, puede no funcionar
