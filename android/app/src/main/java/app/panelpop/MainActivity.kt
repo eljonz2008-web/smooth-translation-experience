@@ -183,12 +183,66 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }, lp(top = 24))
 
-        setContentView(ScrollView(this).apply {
+        val translatorPage = ScrollView(this).apply {
             setBackgroundColor(BG); isVerticalScrollBarEnabled = false
             addView(root)
-        })
+        }
+        buildTabs(translatorPage)
         if (Build.VERSION.SDK_INT >= 33 && !notifGranted())
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
+    }
+
+    // ---------- pestañas (Biblioteca · Explorar · Traductor), como Mihon ----------
+    private lateinit var libraryPage: LibraryPage
+    private lateinit var explorePage: ExplorePage
+    private val pages = ArrayList<View>()
+    private val tabViews = ArrayList<Pair<TextView, TextView>>()
+    private var tab = 0
+
+    private fun buildTabs(translatorPage: View) {
+        val ui = Ui(this)
+        Library.init(this)
+        libraryPage = LibraryPage(this, ui)
+        explorePage = ExplorePage(this, ui)
+        val host = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(BG) }
+        val frame = android.widget.FrameLayout(this)
+        pages.clear(); pages.addAll(listOf(libraryPage.view, explorePage.view, translatorPage))
+        for (p in pages) frame.addView(p, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        host.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        host.addView(View(this).apply { setBackgroundColor(LINE) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; setBackgroundColor(CARD); setPadding(0, dp(8), 0, dp(10))
+        }
+        listOf("▦" to "Biblioteca", "◎" to "Explorar", "文A" to "Traductor").forEachIndexed { i, (icon, label) ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true
+                setOnClickListener { selectTab(i) }
+            }
+            val ic = text(icon, 17f, MUTED, true).apply { gravity = Gravity.CENTER }
+            item.addView(ic, LinearLayout.LayoutParams(dp(64), dp(32)))
+            val lb = text(label, 12f, MUTED).apply { gravity = Gravity.CENTER }
+            item.addView(lb, lp(ViewGroup.LayoutParams.WRAP_CONTENT, top = 4))
+            nav.addView(item, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            tabViews.add(ic to lb)
+        }
+        host.addView(nav)
+        window.navigationBarColor = CARD
+        setContentView(host)
+        selectTab(getSharedPreferences("panelpop", MODE_PRIVATE).getInt("tab", 0).coerceIn(0, 2))
+    }
+
+    private fun selectTab(i: Int) {
+        tab = i
+        getSharedPreferences("panelpop", MODE_PRIVATE).edit().putInt("tab", i).apply()
+        pages.forEachIndexed { j, v -> v.visibility = if (j == i) View.VISIBLE else View.GONE }
+        tabViews.forEachIndexed { j, (ic, lb) ->
+            val on = j == i
+            ic.background = if (on) round(Color.argb(60, 255, 106, 61), 16) else null
+            ic.setTextColor(if (on) ACCENT else MUTED)
+            lb.setTextColor(if (on) TEXT else MUTED)
+        }
+        when (i) { 0 -> libraryPage.refresh(); 1 -> explorePage.refresh() }
     }
 
     // ---------- piezas de interfaz ----------
@@ -340,6 +394,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume(); refresh()
+        if (::libraryPage.isInitialized) when (tab) { 0 -> libraryPage.refresh(); 1 -> explorePage.refresh() }
         LangModels.refresh { langRows.forEach { it.update() } }
     }
 

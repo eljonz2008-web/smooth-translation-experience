@@ -29,6 +29,7 @@ const steps = [
 ];
 
 const features = [
+  { k: "Biblioteca", t: "Tus webs como repositorios", d: "Añade tu web de mangas, guarda series y léelas sin anuncios." },
   { k: "Privado", t: "Todo en tu teléfono", d: "La lectura y la traducción funcionan sin servidores ni cuentas." },
   { k: "Al día", t: "Siempre en su sitio", d: "Las traducciones siguen al cómic y nunca se amontonan." },
   { k: "A medida", t: "Se funde con el globo", d: "Toma el color del globo original y ajusta la letra sola." },
@@ -116,7 +117,7 @@ function Index() {
       </section>
 
       <section className="relative mx-auto max-w-5xl px-6 pb-8">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {features.map((f) => (
             <div key={f.k} className="rounded-3xl border border-border bg-card p-6">
               <span className="font-display text-sm font-extrabold uppercase tracking-widest text-primary">{f.k}</span>
