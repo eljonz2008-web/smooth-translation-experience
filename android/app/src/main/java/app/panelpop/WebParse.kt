@@ -196,8 +196,61 @@ object WebParse {
 
     fun unread(chapters: List<Chapter>, read: Set<String>): Int = chapters.count { key(it.url) !in read }
 
-    fun searchUrl(siteUrl: String, query: String): String {
-        val base = try { URI(siteUrl).let { "${it.scheme}://${it.authority}/" } } catch (e: Exception) { siteUrl }
-        return base + "?s=" + java.net.URLEncoder.encode(query.trim(), "UTF-8")
+    /** Webs cuya búsqueda es una caja emergente: se escribe en ella como una persona. */
+    const val TYPE_SEARCH = "type"
+
+    // Cómo busca cada web conocida (comprobado a mano); el resto usa WordPress "?s="
+    private val SEARCH_TEMPLATES = listOf(
+        "manhwaweb" to "/library?buscar={q}",
+        "olympus" to TYPE_SEARCH,
+        "mhscans" to "/search?q={q}",
+        "lectorjpg" to "/series?name={q}",
+        "visorjpg" to "/series?name={q}",
+        "dragontranslation" to "/?s={q}&post_type=wp-manga",
+    )
+
+    /** Plantilla de búsqueda de una web: "/ruta?x={q}" o [TYPE_SEARCH]. */
+    fun searchTemplate(siteUrl: String): String {
+        val h = host(siteUrl)
+        return SEARCH_TEMPLATES.firstOrNull { h.contains(it.first) }?.second ?: "/?s={q}"
     }
+
+    /** Dirección de búsqueda, o null si hay que escribir en la caja de la portada. */
+    fun searchUrl(siteUrl: String, query: String): String? {
+        val t = searchTemplate(siteUrl)
+        if (t == TYPE_SEARCH) return null
+        val base = try { URI(siteUrl).let { "${it.scheme}://${it.authority}" } } catch (e: Exception) { siteUrl.trimEnd('/') }
+        return base + t.replace("{q}", java.net.URLEncoder.encode(query.trim(), "UTF-8"))
+    }
+
+    /** "Él Héroe" → "el heroe" para comparar títulos. */
+    fun norm(s: String): String = java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "").replace(Regex("[^a-z0-9]+"), " ").trim()
+
+    /** Resultados de búsqueda: series cuyo título contiene todas las palabras buscadas. */
+    fun searchResults(siteUrl: String, raw: List<RawCard>, query: String): List<Card> {
+        val words = norm(query).split(' ').filter { it.isNotEmpty() }
+        if (words.isEmpty()) return seriesCards(siteUrl, raw)
+        return seriesCards(siteUrl, raw).filter { c -> val t = norm(c.title + " " + slugTitle(c.url)); words.all { t.contains(it) } }
+    }
+
+    /**
+     * Siguiente página del listado de series: el enlace «siguiente» de la web, o la misma dirección
+     * con el número de página +1 (?page=2, /page/2/). Null si no se sabe.
+     */
+    fun nextListPage(current: String, nextLink: String, page: Int): String? {
+        if (nextLink.startsWith("http") && sameSite(nextLink, current) && key(nextLink) != key(current)) return nextLink
+        val q = Regex("""([?&](?:page|pagina|p)=)(\d+)""").find(current)
+        if (q != null) return current.replaceRange(q.range, q.groupValues[1] + (page + 1))
+        val p = Regex("""/page/(\d+)/?""").find(current)
+        if (p != null) return current.replaceRange(p.range, "/page/${page + 1}/")
+        return null
+    }
+
+    private val CATALOG = Regex("""(?i)^(biblioteca|cat[aá]logo|directorio|todos(?: los)? (?:mangas|manhwas|series)|lista de (?:mangas|manhwas)|manga ?list|mangas|manhwas|series|library|explorar|explore|comics|todas las series|ver todo|ver todos)$""")
+
+    /** Enlace al catálogo completo de la web (desde la portada), si lo tiene. */
+    fun catalogLink(siteUrl: String, raw: List<RawLink>): String? = raw.firstOrNull {
+        it.url.startsWith("http") && sameSite(it.url, siteUrl) && key(it.url) != key(siteUrl) && CATALOG.matches(it.text.trim())
+    }?.url
 }
