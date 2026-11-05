@@ -119,7 +119,8 @@ object WebParse {
         // Enlaces sacados de los datos de la página (webs que solo dibujan 30 y el resto al bajar)
         val listed = cands.filter { it.link.inList || (it.link.fromData && it.word && under(it.link.url)) }
         cands = when {
-            listed.size >= 2 -> listed
+            // La lista y, además, los capítulos visibles fuera de ella que cuelgan de la serie
+            listed.size >= 2 -> listed + cands.filter { !it.link.inList && !it.link.fromData && it.word && under(it.link.url) }
             else -> cands.filter { !it.link.fromData && (it.word || (it.slug && slugOk)) }
         }
         // Si muchos capítulos cuelgan de la ruta de la serie (/manga/slug/capitulo-1), quédate con esos
