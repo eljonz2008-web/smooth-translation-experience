@@ -13,7 +13,7 @@ object WebParse {
     data class RawCard(val url: String, val title: String, val image: String)
     data class RawImage(val src: String, val width: Int, val height: Int, val inReader: Boolean = false)
 
-    data class Chapter(val url: String, val name: String, val number: Double, val date: String = "")
+    data class Chapter(val url: String, val name: String, val number: Double)
     data class Card(val url: String, val title: String, val image: String)
 
     private val CH_WORD = Regex("""(?i)(cap[ií]tulo|chapter|chap|cap|ch|episodio|episode|ep|vol)""")
@@ -119,7 +119,8 @@ object WebParse {
         // Enlaces sacados de los datos de la página (webs que solo dibujan 30 y el resto al bajar)
         val listed = cands.filter { it.link.inList || (it.link.fromData && it.word && under(it.link.url)) }
         cands = when {
-            listed.size >= 2 -> listed
+            // La lista y, además, los capítulos visibles fuera de ella que cuelgan de la serie
+            listed.size >= 2 -> listed + cands.filter { !it.link.inList && !it.link.fromData && it.word && under(it.link.url) }
             else -> cands.filter { !it.link.fromData && (it.word || (it.slug && slugOk)) }
         }
         // Si muchos capítulos cuelgan de la ruta de la serie (/manga/slug/capitulo-1), quédate con esos
@@ -129,7 +130,7 @@ object WebParse {
         }
         val seenUrl = HashSet<String>(); val seenNum = HashSet<Double>()
         return cands.filter { seenUrl.add(key(it.link.url)) && seenNum.add(it.n) }
-            .map { c -> Chapter(c.link.url, chapterName(c.link.text, c.n), c.n, chapterDate(c.link.text)) }
+            .map { c -> Chapter(c.link.url, chapterName(c.link.text, c.n), c.n) }
             .sortedByDescending { it.number }
     }
 
@@ -174,17 +175,13 @@ object WebParse {
         var s = t.trim().replace(Regex("\\s+"), " ")
         // "manhwaQuiero Trabajar…": la etiqueta del tipo pegada al título
         s = s.replace(Regex("""^(manhwa|manhua|manga|novela|novel|webtoon)(?=\p{Lu})"""), "")
-        // "S Solo Swordmaster CÓMIC" (inicial de adorno y tipo en mayúsculas, como en Olympus)
-        s = s.replace(Regex("""^(\p{Lu}) (?=\1)"""), "").replace(Regex("""\s+(CÓMIC|COMIC|NOVELA|NOVEL|MANHWA|MANHUA|MANGA|WEBTOON)$"""), "")
         for (sep in listOf(" | ", " – ", " — ", " « ", " » ")) if (s.contains(sep)) s = s.substringBefore(sep)
         s = s.replace(Regex("""(?i)^(leer|read)\s+"""), "").replace(Regex("""(?i)\s+(manga|manhwa|manhua)?\s*(online|en español|español|sub español)$"""), "")
-        s = s.replace(Regex("""\s+-\s+(ManhwaWeb|LectorJPG|MHScans|Olympus Scanlation)$""", RegexOption.IGNORE_CASE), "")
         return s.trim()
     }
 
-    /** "/manhwa/yo-solo-como-un-hongo_1774452301462" → "Yo Solo Como Un Hongo" (sin el número de identificación). */
     fun slugTitle(url: String): String {
-        val seg = path(url).trimEnd('/').substringAfterLast('/').replace(Regex("""[-_]\d{6,}$"""), "")
+        val seg = path(url).trimEnd('/').substringAfterLast('/')
         return seg.replace(Regex("[-_]+"), " ").trim().split(' ').filter { it.isNotEmpty() }
             .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
     }
@@ -200,74 +197,61 @@ object WebParse {
 
     fun unread(chapters: List<Chapter>, read: Set<String>): Int = chapters.count { key(it.url) !in read }
 
-    // ---------- Búsqueda ----------
-
-    /** Plantilla para webs que buscan con una caja que no cambia la dirección: hay que escribir en ella. */
+    /** Webs cuya búsqueda es una caja emergente: se escribe en ella como una persona. */
     const val TYPE_SEARCH = "type"
 
-    /**
-     * Dirección de búsqueda. [template] es la forma de buscar de esa web ("/search?q={q}",
-     * "https://x.com/?s={q}" o [TYPE_SEARCH]); sin plantilla se usa la de WordPress (?s=).
-     */
-    fun searchUrl(siteUrl: String, query: String, template: String = ""): String {
+    // Cómo busca cada web conocida (comprobado a mano); el resto usa WordPress "?s="
+    private val SEARCH_TEMPLATES = listOf(
+        "manhwaweb" to "/library?buscar={q}",
+        "olympus" to TYPE_SEARCH,
+        "mhscans" to "/search?q={q}",
+        "lectorjpg" to "/series?name={q}",
+        "visorjpg" to "/series?name={q}",
+        "dragontranslation" to "/?s={q}&post_type=wp-manga",
+    )
+
+    /** Plantilla de búsqueda de una web: "/ruta?x={q}" o [TYPE_SEARCH]. */
+    fun searchTemplate(siteUrl: String): String {
+        val h = host(siteUrl)
+        return SEARCH_TEMPLATES.firstOrNull { h.contains(it.first) }?.second ?: "/?s={q}"
+    }
+
+    /** Dirección de búsqueda, o null si hay que escribir en la caja de la portada. */
+    fun searchUrl(siteUrl: String, query: String): String? {
+        val t = searchTemplate(siteUrl)
+        if (t == TYPE_SEARCH) return null
         val base = try { URI(siteUrl).let { "${it.scheme}://${it.authority}" } } catch (e: Exception) { siteUrl.trimEnd('/') }
-        val q = java.net.URLEncoder.encode(query.trim(), "UTF-8")
-        return when {
-            template == TYPE_SEARCH -> "$base/"
-            template.startsWith("http") -> template.replace("{q}", q)
-            template.startsWith("/") -> base + template.replace("{q}", q)
-            else -> "$base/?s=$q"
-        }
+        return base + t.replace("{q}", java.net.URLEncoder.encode(query.trim(), "UTF-8"))
     }
 
-    /** Plantilla a partir de un formulario de búsqueda de la página (action + nombre de la caja). */
-    fun searchTemplate(pageUrl: String, action: String, field: String): String? {
-        if (field.isBlank()) return null
-        val a = try { URI(pageUrl).resolve(action.ifBlank { "/" }).toString() } catch (e: Exception) { return null }
-        if (!a.startsWith("http") || !sameSite(a, pageUrl)) return null
-        val clean = a.substringBefore('#').substringBefore('?')
-        return "$clean?${java.net.URLEncoder.encode(field, "UTF-8")}={q}"
-    }
-
-    private fun fold(s: String) = java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
+    /** "Él Héroe" → "el heroe" para comparar títulos. */
+    fun norm(s: String): String = java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "").replace(Regex("[^a-z0-9]+"), " ").trim()
 
-    /** ¿El título contiene todas las palabras buscadas? Sin importar tildes ni mayúsculas. */
-    fun matchesQuery(title: String, query: String): Boolean {
-        val words = fold(query).split(' ').filter { it.length >= 2 }
-        if (words.isEmpty()) return true
-        val t = " " + fold(title) + " "
-        return words.all { t.contains(it) }
+    /** Resultados de búsqueda: series cuyo título contiene todas las palabras buscadas. */
+    fun searchResults(siteUrl: String, raw: List<RawCard>, query: String): List<Card> {
+        val words = norm(query).split(' ').filter { it.isNotEmpty() }
+        if (words.isEmpty()) return seriesCards(siteUrl, raw)
+        return seriesCards(siteUrl, raw).filter { c -> val t = norm(c.title + " " + slugTitle(c.url)); words.all { t.contains(it) } }
     }
 
-    /** Resultados de búsqueda: solo las series cuyo título coincide (las webs también muestran "populares"). */
-    fun searchResults(siteUrl: String, raw: List<RawCard>, query: String): List<Card> =
-        seriesCards(siteUrl, raw).filter { matchesQuery(it.title, query) }
-
-    // ---------- Ficha de la serie ----------
-
-    private val DATE = Regex("""(?i)(hace\s+\d+\s+\p{L}+|\d+\s+\p{L}+\s+ago|ayer|hoy|yesterday|today|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|january|february|march|april|may|june|july|august|september|october|november|december|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|jun|jul|ago|sep|oct|nov|dic)\.?(?:\s+(?:de\s+)?\d{2,4})?)""")
-
-    /** Fecha que acompaña al capítulo en la web ("hace 4 días", "25/10/2026", "julio 12, 2026"). */
-    fun chapterDate(text: String): String {
-        val m = DATE.find(text) ?: return ""
-        val s = m.value.trim()
-        return s.replaceFirstChar { it.uppercase() }
+    /**
+     * Siguiente página del listado de series: el enlace «siguiente» de la web, o la misma dirección
+     * con el número de página +1 (?page=2, /page/2/). Null si no se sabe.
+     */
+    fun nextListPage(current: String, nextLink: String, page: Int): String? {
+        if (nextLink.startsWith("http") && sameSite(nextLink, current) && key(nextLink) != key(current)) return nextLink
+        val q = Regex("""([?&](?:page|pagina|p)=)(\d+)""").find(current)
+        if (q != null) return current.replaceRange(q.range, q.groupValues[1] + (page + 1))
+        val p = Regex("""/page/(\d+)/?""").find(current)
+        if (p != null) return current.replaceRange(p.range, "/page/${page + 1}/")
+        return null
     }
 
-    /** Géneros de la serie, limpios y sin repetir. */
-    fun genres(raw: List<String>): List<String> {
-        val seen = HashSet<String>()
-        return raw.map { it.trim().trim(',', '·', '|', '#').trim() }
-            .filter { it.length in 2..24 && it.any { c -> c.isLetter() } && !it.contains("http") }
-            .filter { seen.add(it.lowercase()) }
-            .take(12)
-    }
+    private val CATALOG = Regex("""(?i)^(biblioteca|cat[aá]logo|directorio|todos(?: los)? (?:mangas|manhwas|series)|lista de (?:mangas|manhwas)|manga ?list|mangas|manhwas|series|library|explorar|explore|comics|todas las series|ver todo|ver todos)$""")
 
-    /** Sinopsis: sin espacios repetidos ni restos tipo "Leer más". */
-    fun cleanDescription(t: String): String {
-        val s = t.replace(Regex("[ \\t\\x0B\\f\\r]+"), " ").replace(Regex("\\n\\s*\\n+"), "\n").trim()
-            .replace(Regex("""(?i)\s*(leer|ver|mostrar)\s+m[aá]s\.?$"""), "").trim()
-        return if (s.length < 20) "" else s.take(1500)
-    }
+    /** Enlace al catálogo completo de la web (desde la portada), si lo tiene. */
+    fun catalogLink(siteUrl: String, raw: List<RawLink>): String? = raw.firstOrNull {
+        it.url.startsWith("http") && sameSite(it.url, siteUrl) && key(it.url) != key(siteUrl) && CATALOG.matches(it.text.trim())
+    }?.url
 }
