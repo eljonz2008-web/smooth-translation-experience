@@ -54,7 +54,7 @@ class SourceActivity : Activity() {
         fun go() {
             val q = input.text.toString().trim()
             (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(input.windowToken, 0)
-            load(if (q.isEmpty()) site else WebParse.searchUrl(site, q))
+            if (q.isEmpty()) load(site) else search(q)
         }
         input.setOnEditorActionListener { _, a, e -> if (a == EditorInfo.IME_ACTION_SEARCH || e?.keyCode == KeyEvent.KEYCODE_ENTER) { go(); true } else false }
         search.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -67,7 +67,17 @@ class SourceActivity : Activity() {
         body.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val cover = FrameLayout(this).apply { setBackgroundColor(Pal.BG) }
         adapter = CoverAdapter(ui, emptyList())
-        cover.addView(ui.coverGrid(adapter, { openSeries(it) }, { quickAdd(it) }))
+        val grid = ui.coverGrid(adapter, { openSeries(it) }, { quickAdd(it) })
+        // Al llegar al final se carga la página siguiente del catálogo (como en Mihon)
+        grid.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(v: android.widget.AbsListView?, st: Int) {}
+            override fun onScroll(v: android.widget.AbsListView?, first: Int, visible: Int, total: Int) {
+                if (total > 0 && first + visible >= total - 3) loadMore()
+            }
+        })
+        cover.addView(grid)
+        more = ui.text("", 13f, Pal.MUTED).apply { gravity = Gravity.CENTER; setPadding(0, ui.dp(8), 0, ui.dp(8)); setBackgroundColor(Pal.CARD); visibility = View.GONE }
+        cover.addView(more, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         status = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(ui.dp(32), ui.dp(32), ui.dp(32), ui.dp(32)) }
         spin = ProgressBar(this).apply { isIndeterminate = true; indeterminateTintList = android.content.res.ColorStateList.valueOf(Pal.ACCENT) }
         statusText = ui.text("", 15f, Pal.MUTED).apply { gravity = Gravity.CENTER }
@@ -84,6 +94,29 @@ class SourceActivity : Activity() {
     }
 
     private var needsReload = false
+    private lateinit var more: android.widget.TextView
+    private var busy = false
+    private var query = ""
+    private var page = 1
+    private var nextUrl: String? = null
+    private var appending = false
+    private val visited = HashSet<String>()
+
+    private fun loadMore() {
+        val n = nextUrl ?: return
+        if (busy || query.isNotEmpty() || !visited.add(WebParse.key(n))) return
+        nextUrl = null; appending = true; busy = true; page++
+        more.text = "Cargando más series…"; more.visibility = View.VISIBLE
+        current = n; scraper.load(n)
+    }
+
+    private fun search(q: String) {
+        query = q; current = site; appending = false; busy = true; nextUrl = null
+        adapter.items = emptyList(); adapter.notifyDataSetChanged()
+        status.visibility = View.VISIBLE; spin.visibility = View.VISIBLE; openBtn.visibility = View.GONE
+        statusText.text = "Buscando «$q»…"
+        scraper.search(WebParse.searchUrl(site, q), site, q)
+    }
 
     override fun onResume() {
         super.onResume()
@@ -94,7 +127,8 @@ class SourceActivity : Activity() {
     override fun onDestroy() { scraper.cancel(); web.destroy(); super.onDestroy() }
 
     private fun load(url: String) {
-        current = url
+        current = url; query = ""; page = 1; nextUrl = null; appending = false; busy = true
+        visited.clear(); visited.add(WebParse.key(url)); more.visibility = View.GONE
         adapter.items = emptyList(); adapter.notifyDataSetChanged()
         status.visibility = View.VISIBLE; spin.visibility = View.VISIBLE; openBtn.visibility = View.GONE
         statusText.text = "Cargando series…"
@@ -104,11 +138,22 @@ class SourceActivity : Activity() {
     private fun show(res: Scraped?, partial: Boolean = false) {
         // La web puede redirigir a otro dominio (lectorjpg.com → visorjpg.lat): se compara con el final
         val here = res?.url?.ifEmpty { null } ?: site
-        val cards = res?.let { WebParse.seriesCards(here, it.cards) } ?: emptyList()
+        val found = res?.let { if (query.isNotEmpty()) WebParse.searchResults(here, it.cards, query) else WebParse.seriesCards(here, it.cards) } ?: emptyList()
+        val fresh = found.map { CoverItem(it.url, it.title, it.image, here) }
+        val cards = if (appending) {
+            val keys = adapter.items.map { WebParse.key(it.url) }.toHashSet()
+            adapter.items + fresh.filter { keys.add(WebParse.key(it.url)) }
+        } else fresh
         if (partial && cards.size <= adapter.items.size) return
-        adapter.items = cards.map { CoverItem(it.url, it.title, it.image, here) }
-        adapter.notifyDataSetChanged()
+        if (cards.size != adapter.items.size || !appending) { adapter.items = cards; adapter.notifyDataSetChanged() }
         if (partial) { status.visibility = View.GONE; return }
+        busy = false; more.visibility = View.GONE
+        if (query.isEmpty() && res != null) {
+            // Siguiente página; si es la portada y no tiene, el catálogo completo de la web
+            nextUrl = WebParse.nextListPage(res.url.ifEmpty { current }, res.next, page)
+                ?: if (page == 1) WebParse.catalogLink(here, res.nav) else null
+            if (appending && fresh.isEmpty()) nextUrl = null
+        }
         spin.visibility = View.GONE
         if (cards.isEmpty()) {
             status.visibility = View.VISIBLE; openBtn.visibility = View.VISIBLE
