@@ -117,6 +117,7 @@ class GlobalSearchActivity : Activity() {
             }
             status.text = when {
                 count > 0 -> "$count resultado${if (count == 1) "" else "s"}"
+                done && res == null -> "No se pudo leer esta web"
                 done -> "Sin resultados"
                 else -> "Buscando…"
             }

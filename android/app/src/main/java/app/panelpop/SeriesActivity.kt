@@ -153,6 +153,7 @@ class SeriesActivity : Activity() {
             val first = pagesRead == 0
             pagesRead++
             if (first) {
+                if (res.url.isNotEmpty()) chapterBase = res.url
                 val t = WebParse.cleanTitle(res.title)
                 if (t.isNotEmpty() && t.length <= 120) series.title = t
                 // Algunas webs ponen como "imagen" la propia página o su logo: se queda la portada de la cuadrícula

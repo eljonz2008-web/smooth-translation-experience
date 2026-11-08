@@ -146,10 +146,13 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
                 }
             } ?: 0
             if (score > lastScore && score > 0 && s != null) onProgress?.invoke(s)
-            if (score > 0 && score == lastScore) stableTicks++ else stableTicks = 0
-            lastScore = score
+            // No basta con que el número se repita una vez: al pulsar «Ver más» o hacer scroll,
+            // la web puede tardar varios segundos en dibujar el siguiente grupo.
+            if (score > 0 && score == lastScore && clicks == lastClicks) stableTicks++ else stableTicks = 0
+            lastScore = score; lastClicks = clicks
             val elapsed = SystemClock.uptimeMillis() - started
-            val done = (score > 0 && stableTicks >= 2 && elapsed > 1800) || elapsed > (if (query.isNotEmpty()) SEARCH_TIMEOUT_MS else TIMEOUT_MS)
+            val minElapsed = if (want == Want.IMAGES) 1800 else 3500
+            val done = (score > 0 && stableTicks >= 3 && elapsed > minElapsed) || elapsed > (if (query.isNotEmpty()) SEARCH_TIMEOUT_MS else TIMEOUT_MS)
             if (done) { finished = true; onDone(last) }
             else main.postDelayed({ poll(g) }, 600)
         }
