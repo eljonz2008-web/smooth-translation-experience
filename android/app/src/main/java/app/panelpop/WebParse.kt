@@ -240,13 +240,19 @@ object WebParse {
      * con el número de página +1 (?page=2, /page/2/). Null si no se sabe.
      */
     fun nextListPage(current: String, nextLink: String, page: Int): String? {
-        if (nextLink.startsWith("http") && sameSite(nextLink, current) && key(nextLink) != key(current)) return nextLink
+        declaredNextPage(current, nextLink)?.let { return it }
         val q = Regex("""([?&](?:page|pagina|p)=)(\d+)""").find(current)
         if (q != null) return current.replaceRange(q.range, q.groupValues[1] + (page + 1))
         val p = Regex("""/page/(\d+)/?""").find(current)
         if (p != null) return current.replaceRange(p.range, "/page/${page + 1}/")
-        return null
+        // Las webs tipo app suelen usar ?page=2. Si la dirección no existe, la pantalla
+        // se detiene al no encontrar series nuevas en vez de repetir las mismas para siempre.
+        return current.substringBefore('#') + (if (current.contains('?')) "&" else "?") + "page=${page + 1}"
     }
+
+    /** Solo el «siguiente» declarado por la web; se usa para no inventar páginas de capítulos. */
+    fun declaredNextPage(current: String, nextLink: String): String? =
+        nextLink.takeIf { it.startsWith("http") && sameSite(it, current) && key(it) != key(current) }
 
     private val CATALOG = Regex("""(?i)^(biblioteca|cat[aá]logo|directorio|todos(?: los)? (?:mangas|manhwas|series)|lista de (?:mangas|manhwas)|manga ?list|mangas|manhwas|series|library|explorar|explore|comics|todas las series|ver todo|ver todos)$""")
 

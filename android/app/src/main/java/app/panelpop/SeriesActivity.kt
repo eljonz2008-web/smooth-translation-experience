@@ -69,7 +69,7 @@ class SeriesActivity : Activity() {
         scraper = PageScraper(web, PageScraper.Want.CHAPTERS) { res -> onScraped(res) }
         // Los capítulos salen en pantalla en cuanto aparecen; el resto se va añadiendo
         scraper.onProgress = { res ->
-            val chs = WebParse.chapters(res.url.ifEmpty { series.url }, res.links)
+            val chs = collect(res)
             if (chs.size > series.chapters.size || (chs.isNotEmpty() && !freshList)) {
                 series.chapters = chs; freshList = true
                 statusView.text = "${chs.size} capítulos · buscando más…"

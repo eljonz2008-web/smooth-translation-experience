@@ -153,4 +153,16 @@ class WebParseTest {
 
     @Test fun typeLabelStuckToTitleIsRemoved() =
         assertEquals("Quiero Trabajar Tranquilamente", WebParse.cleanTitle("manhwaQuiero Trabajar Tranquilamente"))
+
+    @Test fun catalogFallsBackToSecondNumberedPage() =
+        assertEquals("https://manhwaweb.com/library?page=2", WebParse.nextListPage("https://manhwaweb.com/library", "", 1))
+
+    @Test fun existingPageNumberIsAdvanced() =
+        assertEquals("https://s.com/series?page=3", WebParse.nextListPage("https://s.com/series?page=2", "", 2))
+
+    @Test fun declaredNextPageRejectsAdsAndLoops() {
+        assertEquals("https://s.com/series?page=2", WebParse.declaredNextPage("https://s.com/series", "https://s.com/series?page=2"))
+        assertNull(WebParse.declaredNextPage("https://s.com/series", "https://ads.com/page/2"))
+        assertNull(WebParse.declaredNextPage("https://s.com/series", "https://s.com/series/"))
+    }
 }
