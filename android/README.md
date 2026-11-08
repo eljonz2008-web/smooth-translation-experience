@@ -17,7 +17,7 @@
 
 ## Biblioteca y repositorios (como Mihon)
 - La pantalla principal tiene pestañas **Biblioteca · Explorar · Traductor**.
-- **Explorar**: cada web de mangas que añade el usuario es un *repositorio*. `SourceActivity` muestra sus series en cuadrícula y permite buscar (`?s=`).
+- **Explorar**: cada web de mangas que añade el usuario es un *repositorio*. `SourceActivity` muestra sus series en cuadrícula, carga más páginas al llegar al final y permite buscar. «Buscar en todas las webs» abre `GlobalSearchActivity`, que consulta todos los repositorios a la vez y agrupa los resultados por web.
 - `SeriesActivity` — portada, ♡ Añadir a la biblioteca, lista de capítulos (leídos en gris; mantener pulsado = marcar).
 - `ReaderActivity` — saca las páginas del capítulo y las muestra limpias en vertical, con Anterior/Siguiente y botón **ES** para encender el traductor.
 - `BrowserActivity` — navegador interno para pasar verificaciones de la web o abrir una serie/capítulo a mano.

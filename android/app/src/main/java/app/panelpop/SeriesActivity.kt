@@ -129,10 +129,11 @@ class SeriesActivity : Activity() {
     private val chapterPages = HashSet<String>()
     private var chapterBase = ""
     private var pagesRead = 0
+    private var countAtPageStart = 0
 
     private fun load() {
         spin.visibility = View.VISIBLE; webBtn.visibility = View.GONE; freshList = false
-        chapterLinks.clear(); chapterPages.clear(); chapterPages.add(WebParse.key(series.url)); pagesRead = 0
+        chapterLinks.clear(); chapterPages.clear(); chapterPages.add(WebParse.key(series.url)); pagesRead = 0; countAtPageStart = 0
         chapterBase = series.url
         statusView.text = if (series.chapters.isEmpty()) "Buscando capítulos…" else "${series.chapters.size} capítulos · actualizando…"
         scraper.load(series.url)

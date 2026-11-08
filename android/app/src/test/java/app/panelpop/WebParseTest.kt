@@ -165,4 +165,12 @@ class WebParseTest {
         assertNull(WebParse.declaredNextPage("https://s.com/series", "https://ads.com/page/2"))
         assertNull(WebParse.declaredNextPage("https://s.com/series", "https://s.com/series/"))
     }
+
+    @Test fun globalSearchMatchesEveryWordWithoutAccents() {
+        val raw = listOf(
+            RawCard("https://s.com/manga/solo-leveling/", "Sólo Leveling", "https://s.com/covers/solo.jpg"),
+            RawCard("https://s.com/manga/solo-max-level/", "Solo Max Level", "https://s.com/covers/max.jpg"),
+        )
+        assertEquals(listOf("Sólo Leveling"), WebParse.searchResults("https://s.com/", raw, "solo leveling").map { it.title })
+    }
 }
