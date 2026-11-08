@@ -168,11 +168,12 @@ class SeriesActivity : Activity() {
             // declarados por la web. Nunca inventa páginas ni sigue un botón de otro capítulo.
             val from = res.url.ifEmpty { chapterBase }
             val next = WebParse.declaredNextPage(from, res.next)
-            if (chs.isNotEmpty() && next != null && pagesRead < 30 && WebParse.chapterNumber("", next) == null &&
-                chapterPages.add(WebParse.key(next))) {
+            if (chs.isNotEmpty() && series.chapters.size > countAtPageStart && next != null && pagesRead < 30 &&
+                WebParse.chapterNumber("", next) == null && chapterPages.add(WebParse.key(next))) {
                 spin.visibility = View.VISIBLE
                 statusView.text = "${series.chapters.size} capítulos · página ${pagesRead + 1}…"
                 refresh()
+                countAtPageStart = series.chapters.size
                 scraper.load(next)
                 return
             }
