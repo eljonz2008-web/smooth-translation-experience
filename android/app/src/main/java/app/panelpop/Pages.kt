@@ -58,9 +58,12 @@ class ExplorePage(private val a: Activity, private val ui: Ui) {
 
     init {
         val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(ui.topBar("Explorar", null, ui.iconBtn("+") { askAdd() }).first)
+        col.addView(ui.topBar("Explorar", null,
+            ui.iconAction(Icons.SEARCH) { searchAll() }, ui.iconAction(Icons.ADD) { askAdd() }).first)
         val inner = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(24)) }
-        inner.addView(ui.text("REPOSITORIOS", 12f, Pal.MUTED, true).apply { letterSpacing = 0.1f })
+        inner.addView(ui.button("Buscar en todas las webs") { searchAll() }, ui.lp(top = 4))
+        inner.addView(ui.text("Escribe un nombre y PanelPop lo buscará en todos tus repositorios a la vez.", 13f, Pal.MUTED), ui.lp(top = 8))
+        inner.addView(ui.text("REPOSITORIOS", 12f, Pal.MUTED, true).apply { letterSpacing = 0.1f }, ui.lp(top = 22))
         inner.addView(list, ui.lp(top = 6))
         inner.addView(ui.button("+  Añadir repositorio") { askAdd() }, ui.lp(top = 14))
         inner.addView(ui.text("Cualquier web de mangas, manhwas o cómics sirve como repositorio: PanelPop lee sus series, " +
@@ -102,6 +105,10 @@ class ExplorePage(private val a: Activity, private val ui: Ui) {
         row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(ui.text("Explorar ›", 13f, Pal.ACCENT, true))
         return row
+    }
+
+    private fun searchAll() {
+        a.startActivity(Intent(a, GlobalSearchActivity::class.java))
     }
 
     fun askAdd() {

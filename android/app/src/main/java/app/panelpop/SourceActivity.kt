@@ -140,19 +140,23 @@ class SourceActivity : Activity() {
         val here = res?.url?.ifEmpty { null } ?: site
         val found = res?.let { if (query.isNotEmpty()) WebParse.searchResults(here, it.cards, query) else WebParse.seriesCards(here, it.cards) } ?: emptyList()
         val fresh = found.map { CoverItem(it.url, it.title, it.image, here) }
+        val before = adapter.items.size
         val cards = if (appending) {
             val keys = adapter.items.map { WebParse.key(it.url) }.toHashSet()
             adapter.items + fresh.filter { keys.add(WebParse.key(it.url)) }
         } else fresh
-        if (partial && cards.size <= adapter.items.size) return
-        if (cards.size != adapter.items.size || !appending) { adapter.items = cards; adapter.notifyDataSetChanged() }
+        val added = cards.size - before
+        if (partial && cards.size <= before) return
+        if (cards.size != before || !appending) { adapter.items = cards; adapter.notifyDataSetChanged() }
         if (partial) { status.visibility = View.GONE; return }
         busy = false; more.visibility = View.GONE
         if (query.isEmpty() && res != null) {
-            // Siguiente página; si es la portada y no tiene, el catálogo completo de la web
-            nextUrl = WebParse.nextListPage(res.url.ifEmpty { current }, res.next, page)
-                ?: if (page == 1) WebParse.catalogLink(here, res.nav) else null
-            if (appending && fresh.isEmpty()) nextUrl = null
+            // Primero el «siguiente» real; en la portada, su catálogo. Como último recurso, ?page=N.
+            val declared = WebParse.declaredNextPage(res.url.ifEmpty { current }, res.next)
+            val catalog = if (page == 1) WebParse.catalogLink(here, res.nav) else null
+            nextUrl = declared ?: catalog ?: WebParse.nextListPage(res.url.ifEmpty { current }, res.next, page)
+            // Algunas webs redirigen una página inexistente al inicio: sin altas nuevas, se termina.
+            if (appending && added <= 0) nextUrl = null
         }
         spin.visibility = View.GONE
         if (cards.isEmpty()) {
