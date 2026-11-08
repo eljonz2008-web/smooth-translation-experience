@@ -125,25 +125,58 @@ class SeriesActivity : Activity() {
     override fun onDestroy() { scraper.cancel(); web.destroy(); super.onDestroy() }
 
     private var freshList = false
+    private val chapterLinks = LinkedHashMap<String, WebParse.RawLink>()
+    private val chapterPages = HashSet<String>()
+    private var chapterBase = ""
+    private var pagesRead = 0
 
     private fun load() {
         spin.visibility = View.VISIBLE; webBtn.visibility = View.GONE; freshList = false
+        chapterLinks.clear(); chapterPages.clear(); chapterPages.add(WebParse.key(series.url)); pagesRead = 0
+        chapterBase = series.url
         statusView.text = if (series.chapters.isEmpty()) "Buscando capítulos…" else "${series.chapters.size} capítulos · actualizando…"
         scraper.load(series.url)
     }
 
-    private fun onScraped(res: Scraped?) {
-        spin.visibility = View.GONE
-        if (res != null) {
-            val t = WebParse.cleanTitle(res.title)
-            if (t.isNotEmpty() && t.length <= 120) series.title = t
-            // Algunas webs ponen como "imagen" la propia página o su logo: entonces se queda la portada de la cuadrícula
-            if (res.cover.startsWith("http") && WebParse.key(res.cover) != WebParse.key(res.url) && WebParse.key(res.cover) != WebParse.key(series.url) &&
-                (series.cover.isEmpty() || !WebParse.looksLikeLogo(res.cover))) series.cover = res.cover
-            val chs = WebParse.chapters(res.url.ifEmpty { series.url }, res.links)
-            if (chs.isNotEmpty()) series.chapters = chs
-            if (series.inLibrary || series.read.isNotEmpty()) Library.save()
+    /** Junta lo encontrado en todas las páginas de la lista, sin perder los capítulos anteriores. */
+    private fun collect(res: Scraped): List<WebParse.Chapter> {
+        if (pagesRead == 0 && chapterLinks.isEmpty() && res.url.isNotEmpty()) chapterBase = res.url
+        for (l in res.links) {
+            val k = WebParse.key(l.url); val old = chapterLinks[k]
+            if (old == null || (old.fromData && !l.fromData) || (!old.inList && l.inList)) chapterLinks[k] = l
         }
+        return WebParse.chapters(chapterBase.ifEmpty { series.url }, chapterLinks.values.toList())
+    }
+
+    private fun onScraped(res: Scraped?) {
+        if (res != null) {
+            val first = pagesRead == 0
+            pagesRead++
+            if (first) {
+                val t = WebParse.cleanTitle(res.title)
+                if (t.isNotEmpty() && t.length <= 120) series.title = t
+                // Algunas webs ponen como "imagen" la propia página o su logo: se queda la portada de la cuadrícula
+                if (res.cover.startsWith("http") && WebParse.key(res.cover) != WebParse.key(res.url) && WebParse.key(res.cover) != WebParse.key(series.url) &&
+                    (series.cover.isEmpty() || !WebParse.looksLikeLogo(res.cover))) series.cover = res.cover
+            }
+            val chs = collect(res)
+            if (chs.isNotEmpty()) series.chapters = chs
+
+            // Si los capítulos están repartidos en páginas, sigue solo los enlaces «siguiente»
+            // declarados por la web. Nunca inventa páginas ni sigue un botón de otro capítulo.
+            val from = res.url.ifEmpty { chapterBase }
+            val next = WebParse.declaredNextPage(from, res.next)
+            if (chs.isNotEmpty() && next != null && pagesRead < 30 && WebParse.chapterNumber("", next) == null &&
+                chapterPages.add(WebParse.key(next))) {
+                spin.visibility = View.VISIBLE
+                statusView.text = "${series.chapters.size} capítulos · página ${pagesRead + 1}…"
+                refresh()
+                scraper.load(next)
+                return
+            }
+        }
+        spin.visibility = View.GONE
+        if (series.inLibrary || series.read.isNotEmpty()) Library.save()
         refresh()
     }
 

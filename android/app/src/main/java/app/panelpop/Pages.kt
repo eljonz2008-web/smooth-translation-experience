@@ -107,6 +107,10 @@ class ExplorePage(private val a: Activity, private val ui: Ui) {
         return row
     }
 
+    private fun searchAll() {
+        a.startActivity(Intent(a, GlobalSearchActivity::class.java))
+    }
+
     fun askAdd() {
         val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0) }
         val url = EditText(a).apply { hint = "Dirección, p. ej. miweb.com"; inputType = InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_CLASS_TEXT; isSingleLine = true }

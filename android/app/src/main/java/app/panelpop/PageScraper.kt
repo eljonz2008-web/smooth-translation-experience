@@ -62,6 +62,7 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
     private var lastScore = -1
     private var stableTicks = 0
     private var clicks = 0
+    private var lastClicks = 0
     private var last: Scraped? = null
     private var finished = false
     var onPage: ((String) -> Unit)? = null
