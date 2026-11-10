@@ -10,3 +10,5 @@
 - [x] Buscador general: buscar un manhwa en todos los repositorios a la vez y abrir cualquier resultado
 - [x] Cargar más series por páginas sin repetir y reunir capítulos plegados o paginados
 - [x] Ejecutar todas las pruebas y generar el APK de la versión 0.6.0
+- [x] Reconocer «Cargar 24 capítulos/series más» y pulsar esos botones hasta completar las listas
+- [x] Añadir pruebas con el botón real de MHScans y generar el APK 0.6.1
