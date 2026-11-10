@@ -202,12 +202,16 @@ return 1})(__Q__)"""
 
         // Pulsa botones tipo «Ver más / Cargar 24 capítulos más» que no lleven a otra página.
         private fun moreJs() = MORE_JS.replace("__LOAD_MORE__", JSONObject.quote(WebParse.LOAD_MORE_PATTERN))
-        private const val MORE_JS = """(function(){var n=0;var els=document.querySelectorAll('button,a,div,span,li');
-for(var i=0;i<els.length&&n<1;i++){var e=els[i];if(e.children.length>2)continue;var t=(e.textContent||'').trim().replace(/\s+/g,' ').replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s].*$/,'').trim();
+        private const val MORE_JS = """(function(){var els=document.querySelectorAll('button,a,div,span,li'),best=null,bs=99;
+for(var i=0;i<els.length;i++){var e=els[i];if(e.children.length>2)continue;var t=(e.textContent||'').trim().replace(/\s+/g,' ').replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s].*$/,'').trim();
 if(t.length>60||!new RegExp(__LOAD_MORE__,'i').test(t))continue;
 var inner=false;for(var k=0;k<e.children.length;k++){if((e.children[k].textContent||'').trim()==t)inner=true}if(inner)continue;
 if(e.tagName=='A'){var h=e.getAttribute('href')||'';if(h&&h!='#'&&h.indexOf('javascript')!=0)continue}
-if(e.offsetParent===null)continue;try{e.click();n++}catch(x){}}return n})()"""
+if(e.offsetParent===null)continue;
+// Los botones «Cargar 65 capítulos más» van antes que «Ver más» de la sinopsis.
+var score=/\d/.test(t)?0:(/cap[ií]tulo|chapter|series|manhwa|manga|episodio|episode|comic/i.test(t)?1:2);
+if(score<bs){best=e;bs=score}}
+if(best){try{best.click();return 1}catch(x){}}return 0})()"""
 
         // Sirve para casi todas las webs de mangas (WordPress Madara, MangaThemesia y genéricas)
         private const val JS = """(function(){
