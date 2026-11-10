@@ -200,10 +200,11 @@ i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('ch
 return 1})(__Q__)"""
         private const val MAX_CLICKS = 40
 
-        // Pulsa botones tipo «Ver más / Mostrar todos» que no lleven a otra página. Devuelve cuántos pulsó.
+        // Pulsa botones tipo «Ver más / Cargar 24 capítulos más» que no lleven a otra página.
+        private fun moreJs() = MORE_JS.replace("__LOAD_MORE__", JSONObject.quote(WebParse.LOAD_MORE_PATTERN))
         private const val MORE_JS = """(function(){var n=0;var els=document.querySelectorAll('button,a,div,span,li');
-for(var i=0;i<els.length&&n<3;i++){var e=els[i];if(e.children.length>2)continue;var t=(e.textContent||'').trim();
-if(t.length>40||!/^(ver|mostrar|cargar|show|load|view)\s+(m[aá]s|more|todos|todo|all)/i.test(t))continue;
+for(var i=0;i<els.length&&n<1;i++){var e=els[i];if(e.children.length>2)continue;var t=(e.textContent||'').trim().replace(/\s+/g,' ').replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s].*$/,'').trim();
+if(t.length>60||!new RegExp(__LOAD_MORE__,'i').test(t))continue;
 var inner=false;for(var k=0;k<e.children.length;k++){if((e.children[k].textContent||'').trim()==t)inner=true}if(inner)continue;
 if(e.tagName=='A'){var h=e.getAttribute('href')||'';if(h&&h!='#'&&h.indexOf('javascript')!=0)continue}
 if(e.offsetParent===null)continue;try{e.click();n++}catch(x){}}return n})()"""

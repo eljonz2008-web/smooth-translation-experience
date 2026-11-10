@@ -175,4 +175,13 @@ class WebParseTest {
         )
         assertEquals(listOf("Sólo Leveling"), WebParse.searchResults("https://s.com/", raw, "solo leveling").map { it.title })
     }
+
+    @Test fun numberedLoadMoreChaptersButtonIsRecognized() =
+        assertTrue(WebParse.isLoadMoreText("Cargar 24 capítulos más ⌄"))
+
+    @Test fun numberedLoadMoreSeriesButtonIsRecognized() =
+        assertTrue(WebParse.isLoadMoreText("Cargar 24 series más"))
+
+    @Test fun ordinaryChapterLinkIsNotALoadMoreButton() =
+        assertFalse(WebParse.isLoadMoreText("Cargar capítulo 24"))
 }
