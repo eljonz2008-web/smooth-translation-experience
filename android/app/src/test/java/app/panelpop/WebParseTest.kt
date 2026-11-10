@@ -5,6 +5,8 @@ import app.panelpop.WebParse.RawImage
 import app.panelpop.WebParse.RawLink
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class WebParseTest {

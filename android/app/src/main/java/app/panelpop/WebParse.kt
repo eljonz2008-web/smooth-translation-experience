@@ -197,6 +197,14 @@ object WebParse {
 
     fun unread(chapters: List<Chapter>, read: Set<String>): Int = chapters.count { key(it.url) !in read }
 
+    /** Botones de listas: «Ver más», «Cargar 24 capítulos más», «Show more»… */
+    const val LOAD_MORE_PATTERN = """^(?=.*\b(?:m[aá]s|more|todos|todas|todo|all)\b)(?:ver|mostrar|cargar|show|load|view)\s+(?:\d+|cap[ií]tulos?|chapters?|series|manhwas?|manhuas?|mangas?|webtoons?|episodios?|episodes?|resultados?|results?|obras?|c[oó]mics?|t[ií]tulos?|titles?|los|las|the|m[aá]s|more|todos|todas|todo|all|\s)+$"""
+    private val LOAD_MORE_NOISE = Regex("""[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s].*$""")
+    fun isLoadMoreText(text: String): Boolean {
+        val t = text.trim().replace(Regex("\\s+"), " ").replace(LOAD_MORE_NOISE, "").trim()
+        return t.length <= 60 && Regex(LOAD_MORE_PATTERN, RegexOption.IGNORE_CASE).matches(t)
+    }
+
     /** Webs cuya búsqueda es una caja emergente: se escribe en ella como una persona. */
     const val TYPE_SEARCH = "type"
 

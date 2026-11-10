@@ -129,10 +129,10 @@ class PageScraper(private val web: WebView, private val want: Want, private val 
         if (typeQuery && !typed) web.evaluateJavascript(TYPE_JS.replace("__Q__", JSONObject.quote(query))) { r -> if (r == "1") { typed = true; seenCards.clear() } }
         // Bajar hasta el final: muchas webs cargan más series/capítulos al hacer scroll
         if (want != Want.IMAGES) web.evaluateJavascript(SCROLL_JS, null)
-        // Listas de capítulos cortadas ("Ver más", "Mostrar todos"): se pulsan solas
-        if (want == Want.CHAPTERS && clicks < MAX_CLICKS) {
+        // Listas cortadas ("Ver más", "Cargar 24 capítulos/series más"): se pulsan solas
+        if (want != Want.IMAGES && clicks < MAX_CLICKS) {
             clicked = true
-            web.evaluateJavascript(MORE_JS) { r -> clicks += r?.toIntOrNull() ?: 0 }
+            web.evaluateJavascript(moreJs()) { r -> clicks += r?.toIntOrNull() ?: 0 }
         }
         web.evaluateJavascript(JS) { res ->
             if (g != gen || finished) return@evaluateJavascript
